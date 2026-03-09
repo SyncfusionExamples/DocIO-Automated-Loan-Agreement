@@ -1,0 +1,65 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+<style>
+    body {
+        background-color: #f0f4f8;
+        font-family: Arial, sans-serif;
+    }
+
+    .card-container {
+        background-color: #ffffff;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        padding: 40px;
+        max-width: 500px;
+        margin: 100px auto;
+        text-align: center;
+    }
+
+        .card-container h4 {
+            color: #2c3e50;
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .card-container p {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
+    .generate-btn {
+        background-color: #1565C0;
+        color: white;
+        border: none;
+        padding: 10px 30px;
+        font-size: 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        width: 200px;
+        height: 40px;
+        transition: background-color 0.3s ease;
+    }
+
+        .generate-btn:hover {
+            background-color: #0d47a1;
+        }
+</style>
+
+<div class="card-container">
+    <h4>Automated Loan Agreement</h4>
+    <p>Generate Automated Loan Agreement using Mail merge</p>
+
+    @{
+        Html.BeginForm("AutomatedLoanAgreement", "Home", FormMethod.Get);
+        {
+            <div>
+                <input type="submit" value="Generate Document" class="generate-btn" />
+            </div>
+        }
+        Html.EndForm();
+    }
+</div>
