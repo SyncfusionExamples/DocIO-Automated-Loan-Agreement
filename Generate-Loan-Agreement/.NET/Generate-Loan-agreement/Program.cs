@@ -7,7 +7,7 @@ namespace Generate_loan_agreement
     {
         static void Main(string[] args)
         {
-            Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense("Ngo9BigBOggjHTQxAR8/V1JGaF5cXGhIfEx0Q3xbf1x1ZFREalxRTnZfUiweQnxTdEBiWH1YcXVRQ2FcVkx1WUleYQ==");
+           
             // Generate loan agreements with combined all records.
             GenerateAgreementsDocuments();
             // Generate individual agreement documents.
