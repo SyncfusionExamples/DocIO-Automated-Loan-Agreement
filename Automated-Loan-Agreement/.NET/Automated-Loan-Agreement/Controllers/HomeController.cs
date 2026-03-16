@@ -1,12 +1,14 @@
 ﻿using Automated_Loan_Agreement.Models;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Syncfusion.DocIO;
 using Syncfusion.DocIO.DLS;
 using Syncfusion.DocIORenderer;
 using Syncfusion.Pdf;
 using System.Diagnostics;
-using System.IO;
-using System.Reflection.Metadata;
+using System.Dynamic;
+using System.IO.Compression;
 
 namespace Automated_Loan_Agreement.Controllers
 {
@@ -19,60 +21,394 @@ namespace Automated_Loan_Agreement.Controllers
             _logger = logger;
         }
 
-        public IActionResult Index()
+        public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, string OutputType)
         {
-            return View();
-        }
-        public ActionResult AutomatedLoanAgreement()
-        {         
-            //Open the file as Stream
-            using (FileStream docStream = new FileStream(Path.GetFullPath("Data/Template.docx"), FileMode.Open, FileAccess.Read))
-            {
-                //Loads file stream into Word document
-                using (WordDocument document = new WordDocument(docStream, FormatType.Automatic))
+            try
+            {             
+                // Validate both files are uploaded
+                if (file == null || jsonFile == null)
                 {
-                    //Gets the employee details as IEnumerable collection.
-                    List<AgreementDetails> agreementList = GetAgreementDeatils();
-                    //Creates an instance of MailMergeDataTable by specifying MailMerge group name and IEnumerable collection.
-                    MailMergeDataTable dataSource = new MailMergeDataTable("AgreementDetails", agreementList);
-                    //Enable the boolean to remove empty paragraph and start each record in new page.
-                    document.MailMerge.RemoveEmptyParagraphs = true;
-                    document.MailMerge.StartAtNewPage = true;
-                    //Performs Mail merge.
-                    document.MailMerge.ExecuteGroup(dataSource);
+                    ViewBag.Message = "Please upload both Word template and JSON data file.";
+                    return View("Index");
+                }
 
-                    //Instantiation of DocIORenderer for Word to PDF conversion
-                    using (DocIORenderer render = new DocIORenderer())
+                return CreatePDF(file, jsonFile, OutputType);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating document");
+                ViewBag.Message = $"Error: {ex.Message}";
+                return View("Index");
+            }
+        }
+        /// <summary>
+        /// Loads Word document, performs mail merge, and generates output PDF
+        /// </summary>
+        private IActionResult CreatePDF(IFormFile file, IFormFile jsonFile, string type)
+        {
+            // Validate file upload
+            if (file == null || file.Length == 0)
+            {
+                ViewBag.Message = "Please select a document file.";
+                return View("Index");
+            }
+
+            // Validate type parameter to avoid NullReferenceException
+            if (string.IsNullOrWhiteSpace(type))
+            {
+                ViewBag.Message = "Document type parameter is required.";
+                return View("Index");
+            }
+
+            // Open the Word document from the uploaded file stream
+            using (Stream stream = file.OpenReadStream())
+            {
+                // Load the Word document with automatic format detection
+                using (WordDocument document = new WordDocument(stream, FormatType.Automatic))
+                {
+                    // Proceed with mail merge only if a valid JSON file is provided
+                    if (jsonFile != null && jsonFile.Length > 0)
                     {
-                        //Converts Word document into PDF document
-                        PdfDocument pdfDocument = render.ConvertToPDF(document);
+                        using (Stream jsonStream = jsonFile.OpenReadStream())
+                        using (StreamReader reader = new StreamReader(jsonStream))
+                        {
+                            string jsonData = reader.ReadToEnd();
 
-                        //Saves the PDF document to MemoryStream.
-                        MemoryStream stream = new MemoryStream();
-                        pdfDocument.Save(stream);
-                        stream.Position = 0;
+                            // Parse the JSON safely and handle malformed JSON
+                            JObject jsonObject;
+                            try
+                            {
+                                jsonObject = JObject.Parse(jsonData);
+                            }
+                            catch (JsonReaderException ex)
+                            {
+                                ViewBag.Message = $"Invalid JSON format: {ex.Message}";
+                                return View("Index");
+                            }
 
-                        //Download PDF document in the browser.
-                        return File(stream, "application/pdf", "Sample.pdf");
+                            // Analyze the JSON structure to determine merge strategy
+                            bool hasOnlySimpleFields = true;
+                            bool hasGroups = false;
+
+                            foreach (var property in jsonObject.Properties())
+                            {
+                                if (property.Value is JArray)
+                                {
+                                    // Found an array — indicates group/nested merge needed
+                                    hasGroups = true;
+                                    hasOnlySimpleFields = false;
+                                }
+                                else if (property.Value is JObject)
+                                {
+                                    // Found a nested object — not a simple field
+                                    hasOnlySimpleFields = false;
+                                }
+                            }
+
+                            // SCENARIO 1: JSON contains only simple key-value pairs
+                            // Use Execute() for flat mail merge
+                            if (hasOnlySimpleFields && !hasGroups)
+                            {
+                                List<string> fieldNames = new List<string>();
+                                List<string> fieldValues = new List<string>();
+
+                                foreach (var property in jsonObject.Properties())
+                                {
+                                    fieldNames.Add(property.Name);
+                                    fieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                }
+
+                                // Execute simple flat mail merge
+                                document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
+                            }
+                            // SCENARIO 2: JSON contains arrays or mixed content
+                            // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
+                            else
+                            {
+                                // Step 1: Extract and merge simple (non-array, non-object) fields first
+                                List<string> simpleFieldNames = new List<string>();
+                                List<string> simpleFieldValues = new List<string>();
+                                foreach (var property in jsonObject.Properties())
+                                {
+                                    if (!(property.Value is JArray) && !(property.Value is JObject))
+                                    {
+                                        simpleFieldNames.Add(property.Name);
+                                        simpleFieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                    }
+                                }
+                                // Execute simple fields merge only if any exist
+                                if (simpleFieldNames.Count > 0)
+                                {
+                                    document.MailMerge.Execute(simpleFieldNames.ToArray(), simpleFieldValues.ToArray());
+                                }
+                                // Step 2: Set each record to start on a new page (only for group merge)
+                                document.MailMerge.StartAtNewPage = true;
+                                // Step 3: Process each array/group property for group mail merge
+                                foreach (var property in jsonObject.Properties())
+                                {
+                                    string groupName = property.Name;
+
+                                    if (property.Value is JArray jsonArray && jsonArray.Count > 0)
+                                    {
+                                        // Check whether the array contains nested groups (arrays within arrays)
+                                        bool hasNestedGroups = CheckForNestedGroups(jsonArray);
+
+                                        if (hasNestedGroups)
+                                        {
+                                            // Use ExecuteNestedGroup for hierarchical/nested data
+                                            List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
+                                            MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
+                                            document.MailMerge.ExecuteNestedGroup(parentTable);
+                                        }
+                                        else
+                                        {
+                                            // Use ExecuteGroup for flat array data
+                                            List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
+                                            MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
+                                            document.MailMerge.ExecuteGroup(dataTable);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+
+                    // OUTPUT SCENARIO 1: Generate and return a single merged PDF file
+                    if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
+                    {
+                        MemoryStream pdfStream = new MemoryStream();
+                        pdfStream = SaveAsPDF(document);
+                        // Return the PDF as a downloadable file
+                        return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
+
+                    }
+                    // OUTPUT SCENARIO 2: Split document by page breaks and return as ZIP
+                    else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
+                    {
+                        byte[] zipBytes = SplitByPageBreak(document);
+
+                        if (zipBytes != null && zipBytes.Length > 0)
+                        {
+                            // Return all split PDFs bundled inside a ZIP file
+                            return File(zipBytes, "application/zip", "converted_pdfs.zip");
+                        }
+                        else
+                        {
+                            MemoryStream pdfStream = new MemoryStream();
+                            pdfStream = SaveAsPDF(document);
+                            // Return the PDF as a downloadable file
+                            return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
+                        }                    
+                    }
+                    else
+                    {
+                        // Handle any unrecognized type value
+                        ViewBag.Message = $"Unknown document type '{type}'. Use 'single' or 'multiple'.";
+                    }
+
+                    return View("Index");
                 }
             }
         }
-       
         /// <summary>
-        /// Gets the agreement details to perform mail merge.
+        /// Splits document by page breaks using bookmarks and returns ZIP bytes
+        /// Each section between page breaks becomes a separate PDF
         /// </summary>
-        public static List<AgreementDetails> GetAgreementDeatils()
+        private byte[] SplitByPageBreak(WordDocument document)
         {
-            List<AgreementDetails> details = new List<AgreementDetails>();
-            details.Add(new AgreementDetails("LA-2026-10001", "March 15, 2026", "California", "Jennifer Anderson", "2458 Sunset Boulevard, Apt 3B", "Los Angeles", "California", "90028", "+1-213-555-0142", "jennifer.anderson@email.com", "Home Loan - Fixed Rate", "$450,000", "6.75", "360", "$2,918", "$2,250", "Residential Property", "3-bedroom house at 2458 Sunset Blvd, Los Angeles, CA", "$585,000", "April 15, 2026", "April 15, 2056", "2% of outstanding principal", "$75", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
-            details.Add(new AgreementDetails("LA-2026-10006", "March 20, 2026", "Texas", "Robert Johnson", "1200 Commerce Street, Suite 400", "Dallas", "Texas", "75202", "+1-214-555-3456", "robert.johnson@startup.com", "Small Business Startup Loan", "$120,000", "10.25", "72", "$1,986", "$1,800", "Business Assets", "Office furniture, computers, and inventory", "$45,000", "April 20, 2026", "April 20, 2032", "3.5% of outstanding principal", "$85", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
-            details.Add(new AgreementDetails("LA-2026-10007", "March 22, 2026", "New York", "Emily Davis", "350 Fifth Avenue, Apt 12C", "New York", "New York", "10118", "+1-212-555-6789", "emily.davis@email.com", "Personal Loan - Home Renovation", "$85,000", "8.50", "84", "$1,312", "$1,275", "Residential Property", "Apartment at 350 Fifth Avenue, New York, NY", "$620,000", "April 22, 2026", "April 22, 2033", "2% of outstanding principal", "$65", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
-            details.Add(new AgreementDetails("LA-2026-10008", "March 25, 2026", "Florida", "Michael Thompson", "789 Ocean Drive, Unit 5", "Miami", "Florida", "33139", "+1-305-555-9012", "michael.thompson@email.com", "Vehicle Loan - New Car", "$55,000", "7.25", "60", "$1,097", "$825", "Motor Vehicle", "2026 Ford Explorer XLT", "$55,000", "April 25, 2026", "April 25, 2031", "No prepayment penalty", "$45", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
-            details.Add(new AgreementDetails("LA-2026-10009", "March 28, 2026", "Illinois", "Sophia Martinez", "233 S Wacker Drive, Suite 800", "Chicago", "Illinois", "60606", "+1-312-555-3478", "sophia.martinez@business.com", "Business Expansion Loan", "$200,000", "9.00", "120", "$2,534", "$3,000", "Commercial Property", "Office space at 233 S Wacker Drive, Chicago, IL", "$350,000", "April 28, 2026", "April 28, 2036", "3% of outstanding principal", "$90", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
-            details.Add(new AgreementDetails("LA-2026-10010", "March 30, 2026", "Washington", "Daniel Wilson", "1420 Harbor Ave SW, Unit 3", "Seattle", "Washington", "98116", "+1-206-555-7654", "daniel.wilson@email.com", "Investment Property Loan", "$520,000", "6.50", "360", "$3,288", "$3,900", "Investment Property", "Condo at 1420 Harbor Ave SW, Seattle, WA", "$680,000", "April 30, 2026", "April 30, 2056", "1.5% of outstanding principal", "$80", DateTime.Today.ToString(), DateTime.Today.ToString(), DateTime.Today.ToString()));
+            // Find all page breaks in the document
+            List<Entity> entities = document.FindAllItemsByProperty(EntityType.Break, "BreakType", "PageBreak");
+            if (entities == null || entities.Count == 0)
+                return null;
 
-            return details;
+            WSection section = document.Sections[0];
+            WTextBody body = section.Body;
+            int bookmarkIndex = 1;
+            // Step 1: Insert a NEW paragraph at the very beginning with BookmarkStart
+            WParagraph firstBookmarkPara = new WParagraph(document);
+            firstBookmarkPara.AppendBookmarkStart($"Page_Bookmark_{bookmarkIndex}");
+            body.ChildEntities.Insert(0, firstBookmarkPara);
+
+            // Step 2: Iterate page break entities → insert bookmark paragraph directly after each
+            foreach (Entity entity in entities)
+            {
+                WParagraph breakParagraph = entity.Owner as WParagraph;
+
+                if (breakParagraph == null) continue;
+
+                // Get the current index of this paragraph in the body
+                int paraIndex = body.ChildEntities.IndexOf(breakParagraph);
+
+                if (paraIndex < 0) continue;
+
+                // Insert new paragraph right after the page break paragraph
+                // Close current bookmark and open next bookmark in same paragraph
+                WParagraph bookmarkPara = new WParagraph(document);
+                bookmarkPara.AppendBookmarkEnd($"Page_Bookmark_{bookmarkIndex}");
+                bookmarkIndex++;
+                bookmarkPara.AppendBookmarkStart($"Page_Bookmark_{bookmarkIndex}");
+                body.ChildEntities.Insert(paraIndex + 1, bookmarkPara);
+            }
+
+            // Step 3: Insert a NEW paragraph at the very end with BookmarkEnd
+            WParagraph lastBookmarkPara = new WParagraph(document);
+            lastBookmarkPara.AppendBookmarkEnd($"Page_Bookmark_{bookmarkIndex}");
+            body.ChildEntities.Add(lastBookmarkPara);
+            // Step 4: Create ZIP file and convert each bookmarked section to PDF
+            var zipStream = new MemoryStream();
+            using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                for (int i = 1; i <= bookmarkIndex; i++)
+                {
+                    try
+                    {
+                        // Navigate to each bookmark section
+                        BookmarksNavigator navigator = new BookmarksNavigator(document);
+                        navigator.MoveToBookmark($"Page_Bookmark_{i}", true, true);
+                        WordDocumentPart documentPart = navigator.GetContent();
+
+                        if (documentPart == null) continue;
+
+                        // Extract content as new WordDocument.
+                        using (WordDocument extractedDoc = documentPart.GetAsWordDocument())
+                        using (DocIORenderer render = new DocIORenderer())
+                        // Convert extracted document into PDF.
+                        using (PdfDocument pdfDocument = render.ConvertToPDF(extractedDoc))
+                        using (MemoryStream pdfStream = new MemoryStream())
+                        {
+                            pdfDocument.Save(pdfStream);
+                            pdfStream.Position = 0;
+
+                            // Write PDF into ZIP entry
+                            var entry = zip.CreateEntry($"Document_{i}.pdf", CompressionLevel.Fastest);
+                            using (var entryStream = entry.Open())
+                            {
+                                pdfStream.CopyTo(entryStream);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log and continue to next section if one fails
+                        _logger.LogError(ex, $"Error converting bookmark {i} to PDF");
+                    }
+                }
+            }
+            return zipStream.ToArray();
+        }
+        /// <summary>
+        /// Convert document into PDF and returns PDF stream
+        /// </summary>
+        private MemoryStream SaveAsPDF(WordDocument document)
+        {
+            using (DocIORenderer renderer = new DocIORenderer())
+            {
+                // Convert the Word document to PDF format
+                using (PdfDocument pdfDocument = renderer.ConvertToPDF(document))
+                {
+                    MemoryStream pdfStream = new MemoryStream();
+                    pdfDocument.Save(pdfStream);
+                    pdfStream.Position = 0;
+
+                    return pdfStream;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Checks if any item in the array contains a nested array (indicates nested groups)
+        /// </summary>
+        private bool CheckForNestedGroups(JArray jsonArray)
+        {
+            if (jsonArray.Count == 0) return false;
+
+            var firstItem = jsonArray[0] as JObject;
+            if (firstItem == null) return false;
+
+            // If any property is an array, it's a nested group structure
+            return firstItem.Properties().Any(p => p.Value is JArray);
+        }
+
+        /// <summary>
+        /// Converts flat JSON array to list of ExpandoObjects (for simple group merge)
+        /// Skips nested array properties
+        /// </summary>
+        private List<ExpandoObject> ConvertToFlatDataList(JArray jsonArray)
+        {
+            List<ExpandoObject> dataList = new List<ExpandoObject>();
+
+            foreach (JObject item in jsonArray)
+            {
+                dynamic expando = new ExpandoObject();
+                var expandoDict = expando as IDictionary<string, object>;
+
+                foreach (var prop in item.Properties())
+                {
+                    if (!(prop.Value is JArray))
+                    {
+                        expandoDict[prop.Name] = prop.Value?.ToString() ?? string.Empty;
+                    }
+                }
+                dataList.Add(expando);
+            }
+            return dataList;
+        }
+
+        /// <summary>
+        /// Recursively converts nested JSON array to list of dynamic ExpandoObjects
+        /// Handles any depth: Employees → Customers → Orders → etc.
+        /// </summary>
+        private List<dynamic> ConvertToNestedDataList(JArray jsonArray)
+        {
+            List<dynamic> dataList = new List<dynamic>();
+
+            foreach (JObject item in jsonArray)
+            {
+                dynamic expando = new ExpandoObject();
+                var expandoDict = expando as IDictionary<string, object>;
+
+                foreach (var prop in item.Properties())
+                {
+                    if (prop.Value is JArray nestedArray)
+                    {
+                        // Recursive call: handles arrays at any depth
+                        expandoDict[prop.Name] = ConvertToNestedDataList(nestedArray);
+                    }
+                    else if (prop.Value is JObject nestedObject)
+                    {
+                        // Convert nested object to ExpandoObject
+                        dynamic nestedExpando = new ExpandoObject();
+                        var nestedDict = nestedExpando as IDictionary<string, object>;
+
+                        foreach (var nestedProp in nestedObject.Properties())
+                        {
+                            if (nestedProp.Value is JArray deepArray)
+                            {
+                                // Recursive call for arrays inside nested objects
+                                nestedDict[nestedProp.Name] = ConvertToNestedDataList(deepArray);
+                            }
+                            else
+                            {
+                                nestedDict[nestedProp.Name] = nestedProp.Value?.ToString() ?? string.Empty;
+                            }
+                        }
+                        expandoDict[prop.Name] = nestedExpando;
+                    }
+                    else
+                    {
+                        // Simple property value
+                        expandoDict[prop.Name] = prop.Value?.ToString() ?? string.Empty;
+                    }
+                }
+                dataList.Add(expando);
+            }
+            return dataList;
+        }
+
+
+        public IActionResult Index()
+        {
+            return View();
         }
 
         public IActionResult Privacy()
@@ -84,70 +420,6 @@ namespace Automated_Loan_Agreement.Controllers
         public IActionResult Error()
         {
             return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
-        }
-    }
-    /// <summary>
-    /// Represents a class to maintain agreement details.
-    /// </summary>
-    public class AgreementDetails
-    {
-        public string AgreementNumber { get; set; }
-        public string AgreementDate { get; set; }
-        public string State { get; set; }
-        public string BorrowerName { get; set; }
-        public string BorrowerAddress { get; set; }
-        public string BorrowerCity { get; set; }
-        public string BorrowerState { get; set; }
-        public string BorrowerZip { get; set; }
-        public string BorrowerPhone { get; set; }
-        public string BorrowerEmail { get; set; }
-        public string LoanProduct { get; set; }
-        public string LoanAmount { get; set; }
-        public string InterestRate { get; set; }
-        public string LoanTerm { get; set; }
-        public string MonthlyPayment { get; set; }
-        public string ProcessingFee { get; set; }
-        public string CollateralType { get; set; }
-        public string CollateralDescription { get; set; }
-        public string CollateralValue { get; set; }
-        public string RepaymentStartDate { get; set; }
-        public string MaturityDate { get; set; }
-        public string PrepaymentPenalty { get; set; }
-        public string LatePaymentFee { get; set; }
-        public string WitnessName { get; set; }
-        public string WitnessDate { get; set; }
-        public string BorrowerDate { get; set; }
-        public string LenderDate { get; set; }
-
-        public AgreementDetails(string agreementNumber, string agreementDate, string state, string borrowerName, string borrowerAddress, string borrowerCity, string borrowerState, string borrowerZip, string borrowerPhone, string borrowerEmail, string loanProduct, string loanAmount,
-            string interestRate, string loanTerm, string monthlyPayment, string processingFee, string collateralType, string collateralDescription, string collateralValue, string repaymentStartDate, string maturityDate, string prepaymentPenalty, string latePaymentFee, string witnessDate, string borrowerDate, string lenderDate)
-        {
-            AgreementNumber = agreementNumber;
-            AgreementDate = agreementDate;
-            State = state;
-            BorrowerName = borrowerName;
-            BorrowerAddress = borrowerAddress;
-            BorrowerCity = borrowerCity;
-            BorrowerState = borrowerState;
-            BorrowerZip = borrowerZip;
-            BorrowerPhone = borrowerPhone;
-            BorrowerEmail = borrowerEmail;
-            LoanProduct = loanProduct;
-            LoanAmount = loanAmount;
-            InterestRate = interestRate;
-            LoanTerm = loanTerm;
-            MonthlyPayment = monthlyPayment;
-            ProcessingFee = processingFee;
-            CollateralType = collateralType;
-            CollateralDescription = collateralDescription;
-            CollateralValue = collateralValue;
-            RepaymentStartDate = repaymentStartDate;
-            MaturityDate = maturityDate;
-            PrepaymentPenalty = prepaymentPenalty;
-            LatePaymentFee = latePaymentFee;
-            WitnessDate = witnessDate;
-            BorrowerDate = borrowerDate;
-            LenderDate = lenderDate;
         }
     }
 }

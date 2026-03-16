@@ -4,62 +4,242 @@
 
 <style>
     body {
-        background-color: #f0f4f8;
-        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
 
-    .card-container {
-        background-color: #ffffff;
-        border-radius: 10px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    .Common {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 80vh;
+        padding: 20px;
+    }
+
+    .tablediv {
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
         padding: 40px;
-        max-width: 500px;
-        margin: 100px auto;
-        text-align: center;
+        max-width: 700px;
+        width: 100%;
     }
 
-        .card-container h4 {
-            color: #2c3e50;
-            font-size: 20px;
-            font-weight: bold;
-            margin-bottom: 10px;
+    .rowdiv {
+        margin-bottom: 15px;
+    }
+
+        .rowdiv:first-child {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #667eea;
         }
 
-        .card-container p {
-            color: #7f8c8d;
+    .content-box {
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 25px;
+        background: #f9f9fc;
+        margin-top: 20px;
+    }
+
+        .content-box p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+    .celldiv {
+        margin-bottom: 20px;
+    }
+
+        .celldiv label {
+            display: block;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 8px;
             font-size: 14px;
-            margin-bottom: 30px;
         }
 
-    .generate-btn {
-        background-color: #1565C0;
+    input[type="file"] {
+        width: 100%;
+        padding: 12px;
+        border: 2px dashed #667eea;
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        font-size: 14px;
+    }
+
+        input[type="file"]:hover {
+            border-color: #764ba2;
+            background: #f0f0ff;
+        }
+
+    .buttonStyle {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border: none;
-        padding: 10px 30px;
-        font-size: 15px;
-        border-radius: 5px;
+        border-radius: 8px;
+        padding: 12px 30px;
+        font-size: 16px;
+        font-weight: 600;
         cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
         width: 200px;
-        height: 40px;
-        transition: background-color 0.3s ease;
+        height: auto;
     }
 
-        .generate-btn:hover {
-            background-color: #0d47a1;
+        .buttonStyle:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .buttonStyle:active {
+            transform: translateY(0);
+        }
+
+    .text-danger {
+        margin-top: 15px;
+        padding: 10px;
+        border-radius: 5px;
+        background: #fee;
+        color: #c33;
+        font-weight: 500;
+        display: none;
+    }
+
+        .text-danger:not(:empty) {
+            display: block;
+        }
+
+    .button-container {
+        text-align: center;
+        margin-top: 25px;
+    }
+
+    .file-input-wrapper {
+        position: relative;
+    }
+
+    .file-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        color: #444;
+        margin-bottom: 8px;
+    }
+
+        .file-label::before {
+            content: "📄";
+            font-size: 18px;
+        }
+
+    .info-text {
+        color: #666;
+        font-size: 14px;
+        line-height: 1.6;
+        margin-bottom: 20px;
+    }
+
+    .option-container {
+        background: #f0f0ff;
+        border: 2px solid #667eea;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+    }
+
+    .option-title {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 15px;
+        font-size: 16px;
+    }
+
+    .radio-option {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+        cursor: pointer;
+    }
+
+        .radio-option input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+
+        .radio-option label {
+            cursor: pointer;
+            color: #555;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .radio-option:hover label {
+            color: #667eea;
         }
 </style>
 
-<div class="card-container">
-    <h4>Automated Loan Agreement</h4>
-    <p>Generate Automated Loan Agreement using Mail merge</p>
-
-    @{
-        Html.BeginForm("AutomatedLoanAgreement", "Home", FormMethod.Get);
-        {
-            <div>
-                <input type="submit" value="Generate Document" class="generate-btn" />
+@using (Html.BeginForm("GenerateDocument", "Home", FormMethod.Post, new { enctype = "multipart/form-data" }))
+{
+    @Html.AntiForgeryToken()
+    <div class="Common">
+        <div class="tablediv">
+            <div class="rowdiv">
+                📝 Generate Automated Document
             </div>
-        }
-        Html.EndForm();
-    }
-</div>
+
+            <div class="content-box">
+                <p class="info-text">
+                    Generate automated PDF documents using DocIO Library. Upload your Word template and JSON data file to create a professional document instantly.
+                </p>
+
+                <div class="rowdiv">
+                    <div class="celldiv">
+                        <div class="file-label">Select Document Template</div>
+                        @Html.TextBox("file", null, new { type = "file", accept = ".doc,.docx,.rtf,.dot,.dotm,.dotx,.docm,.xml", required = "required" })
+                    </div>
+
+                    <div class="celldiv">
+                        <div class="file-label">Select JSON Data File</div>
+                        @Html.TextBox("jsonFile", null, new { type = "file", accept = ".json", required = "required" })
+                    </div>
+
+                    <div class="option-container">
+                        <div class="option-title">📄 Output Options:</div>
+
+                        <div class="radio-option">
+                            <input type="radio" id="singlePDF" name="outputType" value="single" checked />
+                            <label for="singlePDF">Generate all documents as a single PDF</label>
+                        </div>
+
+                        <div class="radio-option">
+                            <input type="radio" id="multiplePDF" name="outputType" value="multiple" />
+                            <label for="multiplePDF">Generate each record as a separate PDF document</label>
+                        </div>
+                    </div>
+
+                    <div class="button-container">
+                        <input class="buttonStyle" type="submit" value="Generate Document" name="button" />
+
+                        <div class="text-danger">
+                            @ViewBag.Message
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
