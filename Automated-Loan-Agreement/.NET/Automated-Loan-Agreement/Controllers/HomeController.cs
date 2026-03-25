@@ -15,24 +15,31 @@ namespace Automated_Loan_Agreement.Controllers
     public class HomeController : Controller
     {
         private readonly ILogger<HomeController> _logger;
+        private readonly IWebHostEnvironment _hostingEnvironment;
 
-        public HomeController(ILogger<HomeController> logger)
+        public HomeController(ILogger<HomeController> logger, IWebHostEnvironment hostingEnvironment)
         {
             _logger = logger;
+            _hostingEnvironment = hostingEnvironment;
         }
 
         public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, string OutputType)
         {
             try
-            {             
-                // Validate both files are uploaded
-                if (file == null || jsonFile == null)
-                {
-                    ViewBag.Message = "Please upload both Word template and JSON data file.";
-                    return View("Index");
-                }
+            {
+                // Load Word document stream (uploaded or default)
+                Stream wordStream = GetWordDocument(file);
 
-                return CreatePDF(file, jsonFile, OutputType);
+                if (wordStream == null)
+                    return View("Index");
+
+                // Load JSON stream - only load default if Word is ALSO using default
+                Stream jsonStream = GetJsonDocument(file, jsonFile);
+
+                if (jsonStream == null)
+                    return View("Index");
+
+                return CreatePDF(wordStream, jsonStream, OutputType);
             }
             catch (Exception ex)
             {
@@ -44,170 +51,224 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Loads Word document, performs mail merge, and generates output PDF
         /// </summary>
-        private IActionResult CreatePDF(IFormFile file, IFormFile jsonFile, string type)
+        private IActionResult CreatePDF(Stream stream, Stream jsonStream, string type)
         {
-            // Validate file upload
-            if (file == null || file.Length == 0)
-            {
-                ViewBag.Message = "Please select a document file.";
-                return View("Index");
-            }
-
             // Validate type parameter to avoid NullReferenceException
             if (string.IsNullOrWhiteSpace(type))
             {
                 ViewBag.Message = "Document type parameter is required.";
                 return View("Index");
             }
-
-            // Open the Word document from the uploaded file stream
-            using (Stream stream = file.OpenReadStream())
+            // Load the Word document with automatic format detection
+            using (WordDocument document = new WordDocument(stream, FormatType.Automatic))
             {
-                // Load the Word document with automatic format detection
-                using (WordDocument document = new WordDocument(stream, FormatType.Automatic))
+                // Proceed with mail merge only if a valid JSON file is provided
+                if (jsonStream != null && jsonStream.Length > 0)
                 {
-                    // Proceed with mail merge only if a valid JSON file is provided
-                    if (jsonFile != null && jsonFile.Length > 0)
+                    using (StreamReader reader = new StreamReader(jsonStream))
                     {
-                        using (Stream jsonStream = jsonFile.OpenReadStream())
-                        using (StreamReader reader = new StreamReader(jsonStream))
+                        string jsonData = reader.ReadToEnd();
+
+                        // Parse the JSON safely and handle malformed JSON
+                        JObject jsonObject;
+                        try
                         {
-                            string jsonData = reader.ReadToEnd();
+                            jsonObject = JObject.Parse(jsonData);
+                        }
+                        catch (JsonReaderException ex)
+                        {
+                            ViewBag.Message = $"Invalid JSON format: {ex.Message}";
+                            return View("Index");
+                        }
 
-                            // Parse the JSON safely and handle malformed JSON
-                            JObject jsonObject;
-                            try
-                            {
-                                jsonObject = JObject.Parse(jsonData);
-                            }
-                            catch (JsonReaderException ex)
-                            {
-                                ViewBag.Message = $"Invalid JSON format: {ex.Message}";
-                                return View("Index");
-                            }
+                        // Analyze the JSON structure to determine merge strategy
+                        bool hasOnlySimpleFields = true;
+                        bool hasGroups = false;
 
-                            // Analyze the JSON structure to determine merge strategy
-                            bool hasOnlySimpleFields = true;
-                            bool hasGroups = false;
+                        foreach (var property in jsonObject.Properties())
+                        {
+                            if (property.Value is JArray)
+                            {
+                                // Found an array — indicates group/nested merge needed
+                                hasGroups = true;
+                                hasOnlySimpleFields = false;
+                            }
+                            else if (property.Value is JObject)
+                            {
+                                // Found a nested object — not a simple field
+                                hasOnlySimpleFields = false;
+                            }
+                        }
+
+                        // SCENARIO 1: JSON contains only simple key-value pairs
+                        // Use Execute() for flat mail merge
+                        if (hasOnlySimpleFields && !hasGroups)
+                        {
+                            List<string> fieldNames = new List<string>();
+                            List<string> fieldValues = new List<string>();
 
                             foreach (var property in jsonObject.Properties())
                             {
-                                if (property.Value is JArray)
-                                {
-                                    // Found an array — indicates group/nested merge needed
-                                    hasGroups = true;
-                                    hasOnlySimpleFields = false;
-                                }
-                                else if (property.Value is JObject)
-                                {
-                                    // Found a nested object — not a simple field
-                                    hasOnlySimpleFields = false;
-                                }
+                                fieldNames.Add(property.Name);
+                                fieldValues.Add(property.Value?.ToString() ?? string.Empty);
                             }
 
-                            // SCENARIO 1: JSON contains only simple key-value pairs
-                            // Use Execute() for flat mail merge
-                            if (hasOnlySimpleFields && !hasGroups)
+                            // Execute simple flat mail merge
+                            document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
+                        }
+                        // SCENARIO 2: JSON contains arrays or mixed content
+                        // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
+                        else
+                        {
+                            // Step 1: Extract and merge simple (non-array, non-object) fields first
+                            List<string> simpleFieldNames = new List<string>();
+                            List<string> simpleFieldValues = new List<string>();
+                            foreach (var property in jsonObject.Properties())
                             {
-                                List<string> fieldNames = new List<string>();
-                                List<string> fieldValues = new List<string>();
-
-                                foreach (var property in jsonObject.Properties())
+                                if (!(property.Value is JArray) && !(property.Value is JObject))
                                 {
-                                    fieldNames.Add(property.Name);
-                                    fieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                    simpleFieldNames.Add(property.Name);
+                                    simpleFieldValues.Add(property.Value?.ToString() ?? string.Empty);
                                 }
-
-                                // Execute simple flat mail merge
-                                document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
                             }
-                            // SCENARIO 2: JSON contains arrays or mixed content
-                            // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
-                            else
+                            // Execute simple fields merge only if any exist
+                            if (simpleFieldNames.Count > 0)
                             {
-                                // Step 1: Extract and merge simple (non-array, non-object) fields first
-                                List<string> simpleFieldNames = new List<string>();
-                                List<string> simpleFieldValues = new List<string>();
-                                foreach (var property in jsonObject.Properties())
+                                document.MailMerge.Execute(simpleFieldNames.ToArray(), simpleFieldValues.ToArray());
+                            }
+                            // Step 2: Set each record to start on a new page (only for group merge)
+                            document.MailMerge.StartAtNewPage = true;
+                            // Step 3: Process each array/group property for group mail merge
+                            foreach (var property in jsonObject.Properties())
+                            {
+                                string groupName = property.Name;
+
+                                if (property.Value is JArray jsonArray && jsonArray.Count > 0)
                                 {
-                                    if (!(property.Value is JArray) && !(property.Value is JObject))
+                                    // Check whether the array contains nested groups (arrays within arrays)
+                                    bool hasNestedGroups = CheckForNestedGroups(jsonArray);
+
+                                    if (hasNestedGroups)
                                     {
-                                        simpleFieldNames.Add(property.Name);
-                                        simpleFieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                        // Use ExecuteNestedGroup for hierarchical/nested data
+                                        List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
+                                        MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
+                                        document.MailMerge.ExecuteNestedGroup(parentTable);
                                     }
-                                }
-                                // Execute simple fields merge only if any exist
-                                if (simpleFieldNames.Count > 0)
-                                {
-                                    document.MailMerge.Execute(simpleFieldNames.ToArray(), simpleFieldValues.ToArray());
-                                }
-                                // Step 2: Set each record to start on a new page (only for group merge)
-                                document.MailMerge.StartAtNewPage = true;
-                                // Step 3: Process each array/group property for group mail merge
-                                foreach (var property in jsonObject.Properties())
-                                {
-                                    string groupName = property.Name;
-
-                                    if (property.Value is JArray jsonArray && jsonArray.Count > 0)
+                                    else
                                     {
-                                        // Check whether the array contains nested groups (arrays within arrays)
-                                        bool hasNestedGroups = CheckForNestedGroups(jsonArray);
-
-                                        if (hasNestedGroups)
-                                        {
-                                            // Use ExecuteNestedGroup for hierarchical/nested data
-                                            List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
-                                            MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
-                                            document.MailMerge.ExecuteNestedGroup(parentTable);
-                                        }
-                                        else
-                                        {
-                                            // Use ExecuteGroup for flat array data
-                                            List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
-                                            MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
-                                            document.MailMerge.ExecuteGroup(dataTable);
-                                        }
+                                        // Use ExecuteGroup for flat array data
+                                        List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
+                                        MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
+                                        document.MailMerge.ExecuteGroup(dataTable);
                                     }
                                 }
                             }
                         }
                     }
+                }
 
-                    // OUTPUT SCENARIO 1: Generate and return a single merged PDF file
-                    if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
+                // OUTPUT SCENARIO 1: Generate and return a single merged PDF file
+                if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
+                {
+                    MemoryStream pdfStream = new MemoryStream();
+                    pdfStream = SaveAsPDF(document);
+                    // Return the PDF as a downloadable file
+                    return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
+
+                }
+                // OUTPUT SCENARIO 2: Split document by page breaks and return as ZIP
+                else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
+                {
+                    byte[] zipBytes = SplitByPageBreak(document);
+
+                    if (zipBytes != null && zipBytes.Length > 0)
+                    {
+                        // Return all split PDFs bundled inside a ZIP file
+                        return File(zipBytes, "application/zip", "converted_pdfs.zip");
+                    }
+                    else
                     {
                         MemoryStream pdfStream = new MemoryStream();
                         pdfStream = SaveAsPDF(document);
                         // Return the PDF as a downloadable file
                         return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
-
                     }
-                    // OUTPUT SCENARIO 2: Split document by page breaks and return as ZIP
-                    else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
-                    {
-                        byte[] zipBytes = SplitByPageBreak(document);
-
-                        if (zipBytes != null && zipBytes.Length > 0)
-                        {
-                            // Return all split PDFs bundled inside a ZIP file
-                            return File(zipBytes, "application/zip", "converted_pdfs.zip");
-                        }
-                        else
-                        {
-                            MemoryStream pdfStream = new MemoryStream();
-                            pdfStream = SaveAsPDF(document);
-                            // Return the PDF as a downloadable file
-                            return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
-                        }                    
-                    }
-                    else
-                    {
-                        // Handle any unrecognized type value
-                        ViewBag.Message = $"Unknown document type '{type}'. Use 'single' or 'multiple'.";
-                    }
-
-                    return View("Index");
                 }
+                else
+                {
+                    // Handle any unrecognized type value
+                    ViewBag.Message = $"Unknown document type '{type}'. Use 'single' or 'multiple'.";
+                }
+
+                return View("Index");
+            }
+
+        }
+
+        /// <summary>
+        /// Retrieves a Word document stream from the uploaded file or a default template.
+        /// </summary>
+
+        private Stream GetWordDocument(IFormFile file)
+        {
+            // Case 1: Uploaded file exists and has content
+            if (file != null && file.Length > 0)
+            {
+                string extension = Path.GetExtension(file.FileName).ToLower();
+                string[] supportedExtensions = { ".doc", ".docx", ".dot", ".dotx", ".dotm", ".docm", ".xml", ".rtf" };
+                // Validate the file extension
+                if (supportedExtensions.Contains(extension))
+                {
+                    // Copy the uploaded file into an in-memory stream
+                    MemoryStream stream = new MemoryStream();
+                    file.CopyTo(stream);
+                    // Reset stream position to the beginning for downstream reading
+                    stream.Position = 0;
+                    return stream;
+                }
+                else
+                {
+                    ViewBag.Message = "Please choose a Word format document to convert to PDF.";
+                    return null;
+                }
+            }
+            else
+            {
+                // Load default file from wwwroot\Data\
+                string defaultFilePath = Path.Combine(_hostingEnvironment.WebRootPath, "Data", "Template.docx");
+                return new FileStream(defaultFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            }
+        }
+        /// <summary>
+        /// Retrieves an Json stream based on the uploaded files.
+        /// </summary>
+        private Stream GetJsonDocument(IFormFile file, IFormFile jsonFile)
+        {
+            // If Word file was uploaded, JSON file must also be uploaded
+            if (file != null && file.Length > 0)
+            {
+                // Ensure an Json file is also uploaded
+                if (jsonFile != null && jsonFile.Length > 0)
+                {
+                    // Copy uploaded Json file into an in-memory stream.
+                    MemoryStream stream = new MemoryStream();
+                    jsonFile.CopyTo(stream);
+                    // Reset stream position so it can be read from the beginning
+                    stream.Position = 0;
+                    return stream;
+                }
+                else
+                {
+                    ViewBag.Message = "Please upload a JSON data file along with the Word document.";
+                    return null;
+                }
+            }
+            else
+            {
+                // Both Word and JSON are defaults (no file uploaded)
+                string defaultJsonPath = Path.Combine(_hostingEnvironment.WebRootPath, "Data", "LoanAgreement.json");
+                return new FileStream(defaultJsonPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             }
         }
         /// <summary>

@@ -55,7 +55,7 @@
         }
 
     .celldiv {
-        margin-bottom: 20px;
+        margin-bottom: 15px;
     }
 
         .celldiv label {
@@ -67,20 +67,8 @@
         }
 
     input[type="file"] {
-        width: 100%;
-        padding: 12px;
-        border: 2px dashed #667eea;
-        border-radius: 8px;
-        background: white;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        font-size: 14px;
+        display: none;
     }
-
-        input[type="file"]:hover {
-            border-color: #764ba2;
-            background: #f0f0ff;
-        }
 
     .buttonStyle {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -125,23 +113,15 @@
         margin-top: 25px;
     }
 
-    .file-input-wrapper {
-        position: relative;
-    }
-
     .file-label {
         display: flex;
         align-items: center;
         gap: 8px;
         font-weight: 600;
         color: #444;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
+        font-size: 14px;
     }
-
-        .file-label::before {
-            content: "📄";
-            font-size: 18px;
-        }
 
     .info-text {
         color: #666;
@@ -190,6 +170,40 @@
         .radio-option:hover label {
             color: #667eea;
         }
+
+    .custom-file-wrapper {
+        display: flex;
+        align-items: center;
+        border: 2px dashed #667eea;
+        border-radius: 8px;
+        background: white;
+        overflow: hidden;
+        margin-bottom: 15px;
+    }
+
+    .custom-file-btn {
+        background: #d1d5db;
+        color: white;
+        padding: 10px 14px;
+        cursor: pointer;
+        font-size: 13px;
+        white-space: nowrap;
+        border: none;
+        font-weight: 500;
+    }
+
+        .custom-file-btn:hover {
+            background: #b0b5be;
+            transition: background 0.3s ease;
+        }
+
+    .custom-file-name {
+        padding: 10px 12px;
+        font-size: 13px;
+        color: #667eea;
+        font-weight: 600;
+        flex: 1;
+    }
 </style>
 
 @using (Html.BeginForm("GenerateDocument", "Home", FormMethod.Post, new { enctype = "multipart/form-data" }))
@@ -208,13 +222,25 @@
 
                 <div class="rowdiv">
                     <div class="celldiv">
-                        <div class="file-label">Select Document Template</div>
-                        @Html.TextBox("file", null, new { type = "file", accept = ".doc,.docx,.rtf,.dot,.dotm,.dotx,.docm,.xml", required = "required" })
+                        <div class="file-label">📄 Select Document Template</div>
+                        <div class="custom-file-wrapper">
+                            <label class="custom-file-btn" for="file">Choose File</label>
+                            <input type="file" id="file" name="file"
+                                   accept=".doc,.docx,.rtf,.dot,.dotm,.dotx,.docm,.xml"
+                                   onchange="updateFileName(this, 'wordFileName')" />
+                            <span class="custom-file-name" id="wordFileName">Template.docx</span>
+                        </div>
                     </div>
 
                     <div class="celldiv">
-                        <div class="file-label">Select JSON Data File</div>
-                        @Html.TextBox("jsonFile", null, new { type = "file", accept = ".json", required = "required" })
+                        <div class="file-label">📋 Select JSON Data File</div>
+                        <div class="custom-file-wrapper">
+                            <label class="custom-file-btn" for="jsonFile">Choose File</label>
+                            <input type="file" id="jsonFile" name="jsonFile"
+                                   accept=".json"
+                                   onchange="updateFileName(this, 'jsonFileName')" />
+                            <span class="custom-file-name" id="jsonFileName">LoanAgreement.json</span>
+                        </div>
                     </div>
 
                     <div class="option-container">
@@ -243,3 +269,14 @@
         </div>
     </div>
 }
+<script>
+    function updateFileName(input, spanId) {
+        const span = document.getElementById(spanId);
+        if (input.files && input.files.length > 0) {
+            span.textContent = input.files[0].name;
+        } else {
+            // Reset to default name if no file selected
+            span.textContent = spanId === 'wordFileName' ? 'LoanAgreement.docx' : 'LoanAgreement.json';
+        }
+    }
+</script>
