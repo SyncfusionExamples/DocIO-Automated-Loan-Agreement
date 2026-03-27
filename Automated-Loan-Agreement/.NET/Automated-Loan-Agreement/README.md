@@ -46,7 +46,7 @@ This repository contains a complete showcase sample demonstrating how to build a
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-repo/Automated-Loan-Agreement.git
+git clone https://github.com/SyncfusionExamples/DocIO-Automated-Loan-Agreement
 ```
 
 ---
