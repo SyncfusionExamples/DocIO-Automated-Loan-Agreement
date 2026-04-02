@@ -106,26 +106,42 @@ namespace Automated_Loan_Agreement.Controllers
                                 hasOnlySimpleFields = false;
                             }
                         }
-
+                        bool templateHasGroupFields = HasGroupMergeFields(document);
                         // SCENARIO 1: JSON contains only simple key-value pairs
                         // Use Execute() for flat mail merge
-                        if (hasOnlySimpleFields && !hasGroups)
+                        if (hasOnlySimpleFields || (hasGroups && !templateHasGroupFields))
                         {
-                            List<string> fieldNames = new List<string>();
-                            List<string> fieldValues = new List<string>();
+                            // Get the array property
+                            var arrayProperty = jsonObject.Properties()
+                                .FirstOrDefault(p => p.Value is JArray);
 
-                            foreach (var property in jsonObject.Properties())
+                            if (arrayProperty != null && arrayProperty.Value is JArray jsonArray && jsonArray.Count > 0)
                             {
-                                fieldNames.Add(property.Name);
-                                fieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                List<object> Data = ((JArray)arrayProperty.Value).ToObject<List<object>>();
+                                document.MailMerge.Execute(Data);
                             }
-
-                            // Execute simple flat mail merge
-                            document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
+                            else
+                            {
+                                // No array found - process as simple fields only
+                                List<string> fieldNames = new List<string>();
+                                List<string> fieldValues = new List<string>();
+                                foreach (var property in jsonObject.Properties())
+                                {
+                                    if (!(property.Value is JArray) && !(property.Value is JObject))
+                                    {
+                                        fieldNames.Add(property.Name);
+                                        fieldValues.Add(property.Value?.ToString() ?? string.Empty);
+                                    }
+                                }
+                                if (fieldNames.Count > 0)
+                                {
+                                    document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
+                                }
+                            }
                         }
                         // SCENARIO 2: JSON contains arrays or mixed content
                         // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
-                        else
+                        else if ((hasGroups && templateHasGroupFields))
                         {
                             // Step 1: Extract and merge simple (non-array, non-object) fields first
                             List<string> simpleFieldNames = new List<string>();
@@ -229,7 +245,16 @@ namespace Automated_Loan_Agreement.Controllers
             }
 
         }
+        /// <summary>
+        /// Checks if the Word document has group merge regions
+        /// </summary>
 
+        private bool HasGroupMergeFields(WordDocument document)
+        {
+            string[] groupNames = document.MailMerge.GetMergeGroupNames();
+            return groupNames != null && groupNames.Length > 0;
+
+        }
         /// <summary>
         /// Extracts data from an input PDF stream and conditionally applies digital signatures
         /// at detected keyword locations using a provided signature image.
