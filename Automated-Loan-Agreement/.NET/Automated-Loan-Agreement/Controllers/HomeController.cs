@@ -5,7 +5,12 @@ using Newtonsoft.Json.Linq;
 using Syncfusion.DocIO;
 using Syncfusion.DocIO.DLS;
 using Syncfusion.DocIORenderer;
+using Syncfusion.Drawing;
 using Syncfusion.Pdf;
+using Syncfusion.Pdf.Graphics;
+using Syncfusion.Pdf.Parsing;
+using Syncfusion.Pdf.Security;
+using Syncfusion.SmartDataExtractor;
 using System.Diagnostics;
 using System.Dynamic;
 using System.IO.Compression;
@@ -23,7 +28,7 @@ namespace Automated_Loan_Agreement.Controllers
             _hostingEnvironment = hostingEnvironment;
         }
 
-        public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, string OutputType)
+        public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, IFormFile signatureImage, string signatureKeywords, string outputType)
         {
             try
             {
@@ -39,7 +44,9 @@ namespace Automated_Loan_Agreement.Controllers
                 if (jsonStream == null)
                     return View("Index");
 
-                return CreatePDF(wordStream, jsonStream, OutputType);
+                bool isUsingDefaults = (file == null || file.Length == 0) && (jsonFile == null || jsonFile.Length == 0);
+
+                return CreatePDF(wordStream, jsonStream, outputType, signatureImage, signatureKeywords, isUsingDefaults);
             }
             catch (Exception ex)
             {
@@ -51,7 +58,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Loads Word document, performs mail merge, and generates output PDF
         /// </summary>
-        private IActionResult CreatePDF(Stream stream, Stream jsonStream, string type)
+        private IActionResult CreatePDF(Stream stream, Stream jsonStream, string type, IFormFile signatureImage, string signatureKeywords, bool isUsingDefaults)
         {
             // Validate type parameter to avoid NullReferenceException
             if (string.IsNullOrWhiteSpace(type))
@@ -142,8 +149,27 @@ namespace Automated_Loan_Agreement.Controllers
                             foreach (var property in jsonObject.Properties())
                             {
                                 string groupName = property.Name;
+                                // Handle JObject (nested object) as single-record group
+                                if (property.Value is JObject nestedObj)
+                                {
+                                    List<ExpandoObject> singleRecordList = new List<ExpandoObject>();
+                                    dynamic record = new ExpandoObject();
+                                    var recordDict = (IDictionary<string, object>)record;
 
-                                if (property.Value is JArray jsonArray && jsonArray.Count > 0)
+                                    // Extract nested object's properties directly
+                                    foreach (var nestedProp in nestedObj.Properties())
+                                    {
+                                        if (!(nestedProp.Value is JArray) && !(nestedProp.Value is JObject))
+                                        {
+                                            recordDict[nestedProp.Name] = nestedProp.Value?.ToString() ?? string.Empty;
+                                        }
+                                    }
+
+                                    singleRecordList.Add(record);
+                                    MailMergeDataTable dataTable = new MailMergeDataTable(groupName, singleRecordList);
+                                    document.MailMerge.ExecuteGroup(dataTable);
+                                }
+                                else if (property.Value is JArray jsonArray && jsonArray.Count > 0)
                                 {
                                     // Check whether the array contains nested groups (arrays within arrays)
                                     bool hasNestedGroups = CheckForNestedGroups(jsonArray);
@@ -168,19 +194,18 @@ namespace Automated_Loan_Agreement.Controllers
                     }
                 }
 
-                // OUTPUT SCENARIO 1: Generate and return a single merged PDF file
+                // OUTPUT: Single merged PDF with signatures
                 if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
                 {
-                    MemoryStream pdfStream = new MemoryStream();
-                    pdfStream = SaveAsPDF(document);
+                    //Adding Signature
+                    MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, isUsingDefaults);
                     // Return the PDF as a downloadable file
                     return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
-
                 }
-                // OUTPUT SCENARIO 2: Split document by page breaks and return as ZIP
+                // OUTPUT: Split document by page breaks with signatures in each PDF
                 else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
                 {
-                    byte[] zipBytes = SplitByPageBreak(document);
+                    byte[] zipBytes = SplitByPageBreak(document, signatureImage, signatureKeywords, isUsingDefaults);
 
                     if (zipBytes != null && zipBytes.Length > 0)
                     {
@@ -189,8 +214,7 @@ namespace Automated_Loan_Agreement.Controllers
                     }
                     else
                     {
-                        MemoryStream pdfStream = new MemoryStream();
-                        pdfStream = SaveAsPDF(document);
+                        MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, isUsingDefaults);
                         // Return the PDF as a downloadable file
                         return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
                     }
@@ -206,6 +230,142 @@ namespace Automated_Loan_Agreement.Controllers
 
         }
 
+        /// <summary>
+        /// Extracts data from an input PDF stream and conditionally applies digital signatures
+        /// at detected keyword locations using a provided signature image.
+        /// </summary>
+
+        private MemoryStream DataExtractor(Stream inputStream, IFormFile signatureImage, string signatureKeywordsInput, bool isUsingDefaults)
+        {
+
+            // Initialize the data extractor with table detection enabled
+            // and form field detection explicitly disabled
+            var extractor = new DataExtractor { EnableFormDetection = false, EnableTableDetection = true, ConfidenceThreshold = 0.6 };
+            // Extract PDF data and load it into a PDF document
+            PdfLoadedDocument document = extractor.ExtractDataAsPdfDocument(inputStream);
+
+            // Get image path only from user-provided image
+            string imagePath = GetSignatureImagePath(signatureImage, isUsingDefaults);
+
+            //If no image provided, return PDF without signature processing
+            if (string.IsNullOrEmpty(imagePath) || !System.IO.File.Exists(imagePath))
+            {
+                _logger.LogInformation("No signature image provided. Returning PDF without digital signatures.");
+                var outMs = new MemoryStream();
+                document.Save(outMs);
+                document.Close(true);
+                outMs.Position = 0;
+                return outMs;
+            }
+
+            // ONLY process signatures if image exists
+            string[] signatureKeywords = string.IsNullOrWhiteSpace(signatureKeywordsInput)
+                ? new[] { "Signature", "WITNESS", "AuthorizedSign" }
+                : signatureKeywordsInput.Split(',').Select(k => k.Trim()).ToArray();
+            // Iterate through each page in the PDF document
+            for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++)
+            {
+                PdfPageBase page = document.Pages[pageIndex];
+                TextLineCollection textLines;
+                // Extract text lines and words from the current page
+                page.ExtractText(out textLines);
+                // Loop through all extracted text lines
+                foreach (TextLine line in textLines.TextLine)
+                {
+                    // Loop through each word within the line
+                    foreach (TextWord word in line.WordCollection)
+                    {
+                        if (!signatureKeywords.Any(k => word.Text.Contains(k, StringComparison.Ordinal)))
+                            continue;
+                        // Determine the bounding rectangle of the keyword
+                        RectangleF bounds = word.Bounds;
+                        // Calculate signature placement relative to keyword position
+                        float signatureX = bounds.X;
+                        float signatureY = bounds.Y - bounds.Height - 5;
+                        float signatureWidth = 80;
+                        float signatureHeight = 20;
+
+                        try
+                        {
+                            using System.IO.FileStream cert = new System.IO.FileStream(Path.GetFullPath("PDF.pfx"), System.IO.FileMode.Open, System.IO.FileAccess.Read);
+                            PdfCertificate pdfCert = new PdfCertificate(cert, "syncfusion");
+                            // Create a digital signature object for the document
+                            PdfSignature signature = new PdfSignature(document, page, pdfCert, "Signature");
+                            // Set signature position and siz
+                            signature.Bounds = new RectangleF(signatureX, signatureY, signatureWidth, signatureHeight);
+
+                            // Add appearance image
+                            if (System.IO.File.Exists(imagePath))
+                            {
+                                using System.IO.FileStream img = new System.IO.FileStream(imagePath, System.IO.FileMode.Open, System.IO.FileAccess.Read);
+                                PdfBitmap signatureImageBitmap = new PdfBitmap(img);
+                                // Draw the image into the signature appearance
+                                signature.Appearance.Normal.Graphics.DrawImage(signatureImageBitmap, 0, 0, signatureWidth, signatureHeight);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error adding signature to PDF");
+                        }
+                    }
+                }
+            }
+            // Save the modified document to a memory stream
+            var outputMs = new MemoryStream();
+            document.Save(outputMs);
+            document.Close(true);
+            outputMs.Position = 0;
+            return outputMs;
+        }
+
+        /// <summary>
+        /// Gets signature image path only from user-provided image
+        /// Returns null if no image provided - no fallback to local files
+        /// </summary>
+        private string GetSignatureImagePath(IFormFile signatureImage, bool isUsingDefaults)
+        {
+            if (signatureImage != null && signatureImage.Length > 0)
+            {
+                // Save user-provided image to temporary location
+                return SaveTemporaryImage(signatureImage);
+            }
+
+            // If using default documents, use default local image
+            if (isUsingDefaults)
+            {
+                string defaultImagePath = Path.GetFullPath("signature.png");
+                if (System.IO.File.Exists(defaultImagePath))
+                {
+                    _logger.LogInformation("Using default signature image from local.");
+                    return defaultImagePath;
+                }
+            }
+
+            // No image provided and not using defaults - return null
+            _logger.LogInformation("No signature image provided.");
+            return null;
+        }
+
+        /// <summary>
+        /// Saves user-provided signature image to temporary file
+        /// </summary>
+        private string SaveTemporaryImage(IFormFile imageFile)
+        {
+            try
+            {
+                string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + System.IO.Path.GetExtension(imageFile.FileName));
+                using (var stream = new System.IO.FileStream(tempPath, System.IO.FileMode.Create))
+                {
+                    imageFile.CopyTo(stream);
+                }
+                return tempPath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving temporary signature image");
+                return null;
+            }
+        }
         /// <summary>
         /// Retrieves a Word document stream from the uploaded file or a default template.
         /// </summary>
@@ -275,7 +435,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// Splits document by page breaks using bookmarks and returns ZIP bytes
         /// Each section between page breaks becomes a separate PDF
         /// </summary>
-        private byte[] SplitByPageBreak(WordDocument document)
+        private byte[] SplitByPageBreak(WordDocument document, IFormFile signatureImage, string signatureKeywords, bool isUsingDefaults)
         {
             // Find all page breaks in the document
             List<Entity> entities = document.FindAllItemsByProperty(EntityType.Break, "BreakType", "PageBreak");
@@ -340,11 +500,14 @@ namespace Automated_Loan_Agreement.Controllers
                             pdfDocument.Save(pdfStream);
                             pdfStream.Position = 0;
 
+                            // Apply digital signatures to each PDF
+                            MemoryStream signedPdfStream = DataExtractor(pdfStream, signatureImage, signatureKeywords, isUsingDefaults);
+
                             // Write PDF into ZIP entry
                             var entry = zip.CreateEntry($"Document_{i}.pdf", CompressionLevel.Fastest);
                             using (var entryStream = entry.Open())
                             {
-                                pdfStream.CopyTo(entryStream);
+                                signedPdfStream.CopyTo(entryStream);
                             }
                         }
                     }
