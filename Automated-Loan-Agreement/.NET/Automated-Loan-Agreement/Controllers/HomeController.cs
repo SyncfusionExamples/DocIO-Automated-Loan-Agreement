@@ -94,15 +94,10 @@ namespace Automated_Loan_Agreement.Controllers
 
                         foreach (var property in jsonObject.Properties())
                         {
-                            if (property.Value is JArray)
+                            if (property.Value is JArray || property.Value is JObject)
                             {
-                                // Found an array — indicates group/nested merge needed
+                                // Found an array OR nested object — indicates group/nested merge needed
                                 hasGroups = true;
-                                hasOnlySimpleFields = false;
-                            }
-                            else if (property.Value is JObject)
-                            {
-                                // Found a nested object — not a simple field
                                 hasOnlySimpleFields = false;
                             }
                         }
