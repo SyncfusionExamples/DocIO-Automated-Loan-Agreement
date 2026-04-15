@@ -28,10 +28,10 @@ namespace Automated_Loan_Agreement.Controllers
             _hostingEnvironment = hostingEnvironment;
         }
 
-        public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, IFormFile signatureImage, string signatureKeywords, string outputType)
+        public IActionResult GenerateDocument(IFormFile file, IFormFile jsonFile, IFormFile signatureImage, string signatureKeywords, string outputType, bool enableDigitalSign)
         {
             try
-            {
+            {              
                 // Load Word document stream (uploaded or default)
                 Stream wordStream = GetWordDocument(file);
 
@@ -44,9 +44,7 @@ namespace Automated_Loan_Agreement.Controllers
                 if (jsonStream == null)
                     return View("Index");
 
-                bool isUsingDefaults = (file == null || file.Length == 0) && (jsonFile == null || jsonFile.Length == 0);
-
-                return CreatePDF(wordStream, jsonStream, outputType, signatureImage, signatureKeywords, isUsingDefaults);
+                return CreatePDF(wordStream, jsonStream, outputType, signatureImage, signatureKeywords, enableDigitalSign);
             }
             catch (Exception ex)
             {
@@ -58,7 +56,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Loads Word document, performs mail merge, and generates output PDF
         /// </summary>
-        private IActionResult CreatePDF(Stream stream, Stream jsonStream, string type, IFormFile signatureImage, string signatureKeywords, bool isUsingDefaults)
+        private IActionResult CreatePDF(Stream stream, Stream jsonStream, string type, IFormFile signatureImage, string signatureKeywords, bool enableDigitalSign)
         {
             // Validate type parameter to avoid NullReferenceException
             if (string.IsNullOrWhiteSpace(type))
@@ -76,11 +74,11 @@ namespace Automated_Loan_Agreement.Controllers
                     {
                         string jsonData = reader.ReadToEnd();
 
-                        // Parse the JSON safely and handle malformed JSON
-                        JObject jsonObject;
+                        // Parse as JToken to handle both JObject and JArray at root level
+                        JToken jsonToken;
                         try
                         {
-                            jsonObject = JObject.Parse(jsonData);
+                            jsonToken = JToken.Parse(jsonData);
                         }
                         catch (JsonReaderException ex)
                         {
@@ -88,120 +86,26 @@ namespace Automated_Loan_Agreement.Controllers
                             return View("Index");
                         }
 
-                        // Analyze the JSON structure to determine merge strategy
-                        bool hasOnlySimpleFields = true;
-                        bool hasGroups = false;
+                        // Check if template has group merge fields
+                        string[] templateGroups = HasGroupMergeFields(document);
+                        bool templateHasGroupFields = templateGroups != null && templateGroups.Length > 0;
 
-                        foreach (var property in jsonObject.Properties())
-                        {
-                            if (property.Value is JArray || property.Value is JObject)
-                            {
-                                // Found an array OR nested object — indicates group/nested merge needed
-                                hasGroups = true;
-                                hasOnlySimpleFields = false;
-                            }
-                        }
-                        bool templateHasGroupFields = HasGroupMergeFields(document);
-                        // SCENARIO 1: JSON contains only simple key-value pairs
-                        // Use Execute() for flat mail merge
-                        if (hasOnlySimpleFields || (hasGroups && !templateHasGroupFields))
-                        {
-                            // Get the array property
-                            var arrayProperty = jsonObject.Properties()
-                                .FirstOrDefault(p => p.Value is JArray);
+                        // Check if JSON contains groups (arrays or nested objects)
+                        bool jsonHasGroups = JsonContainsGroups(jsonToken);
 
-                            if (arrayProperty != null && arrayProperty.Value is JArray jsonArray && jsonArray.Count > 0)
-                            {
-                                List<object> Data = ((JArray)arrayProperty.Value).ToObject<List<object>>();
-                                document.MailMerge.Execute(Data);
-                            }
-                            else
-                            {
-                                // No array found - process as simple fields only
-                                List<string> fieldNames = new List<string>();
-                                List<string> fieldValues = new List<string>();
-                                foreach (var property in jsonObject.Properties())
-                                {
-                                    if (!(property.Value is JArray) && !(property.Value is JObject))
-                                    {
-                                        fieldNames.Add(property.Name);
-                                        fieldValues.Add(property.Value?.ToString() ?? string.Empty);
-                                    }
-                                }
-                                if (fieldNames.Count > 0)
-                                {
-                                    document.MailMerge.Execute(fieldNames.ToArray(), fieldValues.ToArray());
-                                }
-                            }
-                        }
-                        // SCENARIO 2: JSON contains arrays or mixed content
+                        // Decide which mail merge method to use
+                        // SCENARIO 1: JSON contains arrays or mixed content
                         // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
-                        else if ((hasGroups && templateHasGroupFields))
+                        if (templateHasGroupFields && jsonHasGroups)
                         {
-                            // Step 1: Extract and merge simple (non-array, non-object) fields first
-                            List<string> simpleFieldNames = new List<string>();
-                            List<string> simpleFieldValues = new List<string>();
-                            foreach (var property in jsonObject.Properties())
-                            {
-                                if (!(property.Value is JArray) && !(property.Value is JObject))
-                                {
-                                    simpleFieldNames.Add(property.Name);
-                                    simpleFieldValues.Add(property.Value?.ToString() ?? string.Empty);
-                                }
-                            }
-                            // Execute simple fields merge only if any exist
-                            if (simpleFieldNames.Count > 0)
-                            {
-                                document.MailMerge.Execute(simpleFieldNames.ToArray(), simpleFieldValues.ToArray());
-                            }
-                            // Step 2: Set each record to start on a new page (only for group merge)
-                            document.MailMerge.StartAtNewPage = true;
-                            // Step 3: Process each array/group property for group mail merge
-                            foreach (var property in jsonObject.Properties())
-                            {
-                                string groupName = property.Name;
-                                // Handle JObject (nested object) as single-record group
-                                if (property.Value is JObject nestedObj)
-                                {
-                                    List<ExpandoObject> singleRecordList = new List<ExpandoObject>();
-                                    dynamic record = new ExpandoObject();
-                                    var recordDict = (IDictionary<string, object>)record;
-
-                                    // Extract nested object's properties directly
-                                    foreach (var nestedProp in nestedObj.Properties())
-                                    {
-                                        if (!(nestedProp.Value is JArray) && !(nestedProp.Value is JObject))
-                                        {
-                                            recordDict[nestedProp.Name] = nestedProp.Value?.ToString() ?? string.Empty;
-                                        }
-                                    }
-
-                                    singleRecordList.Add(record);
-                                    MailMergeDataTable dataTable = new MailMergeDataTable(groupName, singleRecordList);
-                                    document.MailMerge.ExecuteGroup(dataTable);
-                                }
-                                else if (property.Value is JArray jsonArray && jsonArray.Count > 0)
-                                {
-                                    // Check whether the array contains nested groups (arrays within arrays)
-                                    bool hasNestedGroups = CheckForNestedGroups(jsonArray);
-
-                                    if (hasNestedGroups)
-                                    {
-                                        // Use ExecuteNestedGroup for hierarchical/nested data
-                                        List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
-                                        MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
-                                        document.MailMerge.ExecuteNestedGroup(parentTable);
-                                    }
-                                    else
-                                    {
-                                        // Use ExecuteGroup for flat array data
-                                        List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
-                                        MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
-                                        document.MailMerge.ExecuteGroup(dataTable);
-                                    }
-                                }
-                            }
+                            ExecuteGroupMailMerge(document, jsonToken);
                         }
+                        // SCENARIO 2: Simple fields OR groups without template group fields
+                        else
+                        {
+                            ExecuteSimpleMailMerge(document, jsonToken);
+                        }
+                       
                     }
                 }
 
@@ -209,14 +113,14 @@ namespace Automated_Loan_Agreement.Controllers
                 if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
                 {
                     //Adding Signature
-                    MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, isUsingDefaults);
+                    MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, enableDigitalSign);
                     // Return the PDF as a downloadable file
                     return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
                 }
                 // OUTPUT: Split document by page breaks with signatures in each PDF
                 else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
                 {
-                    byte[] zipBytes = SplitByPageBreak(document, signatureImage, signatureKeywords, isUsingDefaults);
+                    byte[] zipBytes = SplitByPageBreak(document, signatureImage, signatureKeywords, enableDigitalSign);
 
                     if (zipBytes != null && zipBytes.Length > 0)
                     {
@@ -225,7 +129,7 @@ namespace Automated_Loan_Agreement.Controllers
                     }
                     else
                     {
-                        MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, isUsingDefaults);
+                        MemoryStream pdfStream = DataExtractor(SaveAsPDF(document), signatureImage, signatureKeywords, enableDigitalSign);
                         // Return the PDF as a downloadable file
                         return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
                     }
@@ -244,33 +148,365 @@ namespace Automated_Loan_Agreement.Controllers
         /// Checks if the Word document has group merge regions
         /// </summary>
 
-        private bool HasGroupMergeFields(WordDocument document)
+        private string[] HasGroupMergeFields(WordDocument document)
         {
             string[] groupNames = document.MailMerge.GetMergeGroupNames();
-            return groupNames != null && groupNames.Length > 0;
+            return groupNames;
 
         }
         /// <summary>
-        /// Extracts data from an input PDF stream and conditionally applies digital signatures
-        /// at detected keyword locations using a provided signature image.
+        /// Checks if JSON contains groups (arrays or nested objects)
         /// </summary>
-
-        private MemoryStream DataExtractor(Stream inputStream, IFormFile signatureImage, string signatureKeywordsInput, bool isUsingDefaults)
+        private bool JsonContainsGroups(JToken jsonToken)
         {
-
-            // Initialize the data extractor with table detection enabled
-            // and form field detection explicitly disabled
-            var extractor = new DataExtractor { EnableFormDetection = false, EnableTableDetection = true, ConfidenceThreshold = 0.6 };
-            // Extract PDF data and load it into a PDF document
-            PdfLoadedDocument document = extractor.ExtractDataAsPdfDocument(inputStream);
-
-            // Get image path only from user-provided image
-            string imagePath = GetSignatureImagePath(signatureImage, isUsingDefaults);
-
-            //If no image provided, return PDF without signature processing
-            if (string.IsNullOrEmpty(imagePath) || !System.IO.File.Exists(imagePath))
+            if (jsonToken is JArray)
             {
-                _logger.LogInformation("No signature image provided. Returning PDF without digital signatures.");
+                return true;
+            }
+
+            if (jsonToken is JObject rootObject)
+            {
+                foreach (var property in rootObject.Properties())
+                {
+                    if (property.Value is JArray || property.Value is JObject)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Executes a simple mail merge on a Word document using JSON data.
+        /// Supports multiple JSON formats including:
+        /// - Direct array of objects
+        /// - Columns/Rows format
+        /// - Wrapped array format
+        /// - Single flat object
+        /// </summary>
+        private void ExecuteSimpleMailMerge(WordDocument document, JToken jsonToken)
+        {
+            // List to hold mail merge records
+            List<ExpandoObject> records = new List<ExpandoObject>();
+
+            // CASE 1: Root-level array
+            if (jsonToken is JArray directArray)
+            {
+                records = ConvertDirectArrayToRecords(directArray);
+            }
+            // CASE 2: Root is an object
+            else if (jsonToken is JObject parsedObject)
+            {
+                // CASE 2A: JSON in Columns/Rows format
+                if (parsedObject.ContainsKey("Columns") && parsedObject.ContainsKey("Rows") &&
+                    parsedObject["Columns"] is JArray columnsArray &&
+                    parsedObject["Rows"] is JArray rowsArray)
+                {
+                    records = ConvertColumnsRowsToRecords(columnsArray, rowsArray);
+                }
+                // CASE 2B: Object that wraps an array property
+                else
+                {
+                    var arrayProperty = parsedObject.Properties()
+                        .FirstOrDefault(p => p.Value is JArray);
+
+                    if (arrayProperty != null && arrayProperty.Value is JArray jsonArray && jsonArray.Count > 0)
+                    {
+                        records = ConvertWrappedArrayToRecords(jsonArray);
+                    }
+                    else
+                    {
+                        // CASE 2C: Single object (simple or nested JSON)
+                        ExecuteSingleObjectMailMerge(document, parsedObject);
+                        return;
+                    }
+                }
+            }
+            // Execute mail merge if records exist
+            if (records.Count > 0)
+            {
+                document.MailMerge.Execute(records);
+            }
+        }
+
+        /// <summary>
+        /// Converts a direct JSON array to list of ExpandoObjects
+        /// </summary>
+        private List<ExpandoObject> ConvertDirectArrayToRecords(JArray directArray)
+        {
+            List<ExpandoObject> records = new List<ExpandoObject>();
+
+            foreach (JObject item in directArray)
+            {
+                var flattenedFields = FlattenJson(item);
+                if (flattenedFields.Count > 0)
+                {
+                    dynamic record = new ExpandoObject();
+                    var recordDict = (IDictionary<string, object>)record;
+
+                    foreach (var kvp in flattenedFields)
+                    {
+                        recordDict[kvp.Key] = kvp.Value;
+                    }
+
+                    records.Add(record);
+                }
+            }
+
+            return records;
+        }
+
+        /// <summary>
+        /// Converts Columns/Rows format JSON to list of ExpandoObjects
+        /// </summary>
+        private List<ExpandoObject> ConvertColumnsRowsToRecords(JArray columnsArray, JArray rowsArray)
+        {
+            List<ExpandoObject> records = new List<ExpandoObject>();
+            List<string> columns = columnsArray.ToObject<List<string>>();
+
+            foreach (JArray row in rowsArray)
+            {
+                if (row.Count == columns.Count)
+                {
+                    dynamic record = new ExpandoObject();
+                    var recordDict = (IDictionary<string, object>)record;
+
+                    for (int i = 0; i < columns.Count; i++)
+                    {
+                        recordDict[columns[i]] = row[i]?.ToString() ?? string.Empty;
+                    }
+                    records.Add(record);
+                }
+            }
+
+            return records;
+        }
+
+        /// <summary>
+        /// Converts wrapped array format JSON to list of ExpandoObjects
+        /// Example: { "employees": [ { ... }, { ... } ] }
+        /// </summary>
+        private List<ExpandoObject> ConvertWrappedArrayToRecords(JArray jsonArray)
+        {
+            List<ExpandoObject> records = new List<ExpandoObject>();
+
+            if (jsonArray.Count > 0 && jsonArray[0] is JObject)
+            {
+                foreach (JObject item in jsonArray)
+                {
+                    var flattenedFields = FlattenJson(item);
+                    if (flattenedFields.Count > 0)
+                    {
+                        dynamic record = new ExpandoObject();
+                        var recordDict = (IDictionary<string, object>)record;
+
+                        foreach (var kvp in flattenedFields)
+                        {
+                            recordDict[kvp.Key] = kvp.Value;
+                        }
+                        records.Add(record);
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Array of primitives detected");
+            }
+
+            return records;
+        }
+
+        /// <summary>
+        /// Executes mail merge for a single flat object
+        /// Example: { "EmployeeId": "EMP001", "Name": "John Doe" }
+        /// </summary>
+        private void ExecuteSingleObjectMailMerge(WordDocument document, JObject parsedObject)
+        {
+            var flattenedFields = FlattenJson(parsedObject);
+            if (flattenedFields.Count > 0)
+            {
+                document.MailMerge.Execute(flattenedFields.Keys.ToArray(), flattenedFields.Values.ToArray());
+            }
+        }
+        /// <summary>
+        /// Executes a mail merge operation on a Word document using data from a JSON token.
+        /// Processes complex nested groups/arrays.
+        /// </summary>
+        private void ExecuteGroupMailMerge(WordDocument document, JToken jsonToken)
+        {
+            if (jsonToken is JObject groupJsonObject)
+            {
+                // Step 1: Extract simple fields from JSON
+                Dictionary<string, string> simpleFields = ExtractSimpleFieldsFromJson(groupJsonObject);
+
+                // Step 2: Process complex groups (nested objects and arrays)
+                // Enable new page for each group execution
+                document.MailMerge.StartAtNewPage = true;
+
+                foreach (var property in groupJsonObject.Properties())
+                {
+                    string groupName = property.Name;
+                    // Handle single nested object as a group
+                    if (property.Value is JObject nestedObj)
+                    {
+                        List<ExpandoObject> singleRecordList = new List<ExpandoObject>();
+                        dynamic record = new ExpandoObject();
+                        var recordDict = (IDictionary<string, object>)record;
+                        // Extract simple fields from nested object
+                        foreach (var nestedProp in nestedObj.Properties())
+                        {
+                            if (!(nestedProp.Value is JArray) && !(nestedProp.Value is JObject))
+                            {
+                                recordDict[nestedProp.Name] = nestedProp.Value?.ToString() ?? string.Empty;
+                            }
+                        }
+
+                        singleRecordList.Add(record);
+                        MailMergeDataTable dataTable = new MailMergeDataTable(groupName, singleRecordList);
+                        document.MailMerge.ExecuteGroup(dataTable);
+                    }
+                    // Handle array of records as a group
+                    else if (property.Value is JArray jsonArray && jsonArray.Count > 0)
+                    {
+                        // Check if array contains nested groups (arrays or objects within objects)
+                        bool hasNestedGroups = CheckForNestedGroups(jsonArray);
+
+                        if (hasNestedGroups)
+                        {
+                            // Convert and execute as nested group mail merge
+                            List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
+                            MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
+                            document.MailMerge.ExecuteNestedGroup(parentTable);
+                        }
+                        else
+                        {
+                            // Convert and execute as flat group mail merge
+                            List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
+                            MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
+                            document.MailMerge.ExecuteGroup(dataTable);
+                        }
+                    }
+                }
+                // Step 3: Execute remaining unmerged simple fields
+                ExecuteFieldsDictionary(document, simpleFields, onlyUnmerged: true);
+            }
+        }
+        /// <summary>
+        /// Extracts simple fields (non-array, non-object properties) from JSON object
+        /// </summary>
+        private Dictionary<string, string> ExtractSimpleFieldsFromJson(JObject jsonObject)
+        {
+            Dictionary<string, string> simpleFields = new Dictionary<string, string>();
+
+            foreach (var property in jsonObject.Properties())
+            {
+                if (!(property.Value is JArray) && !(property.Value is JObject))
+                {
+                    simpleFields[property.Name] = property.Value?.ToString() ?? string.Empty;
+                }
+            }
+
+            return simpleFields;
+        }
+        /// <summary>
+        /// Executes mail merge using a dictionary of field names and values.
+        /// Can optionally check for unmerged fields only.
+        /// </summary>
+        private void ExecuteFieldsDictionary(WordDocument document, Dictionary<string, string> fields, bool onlyUnmerged = false)
+        {
+            if (fields == null || fields.Count == 0)
+            {
+                return;
+            }
+            Dictionary<string, string> fieldsToExecute = fields;
+            // If onlyUnmerged is true, filter to only unmerged fields in the document
+            if (onlyUnmerged)
+            {
+                string[] unmergedFields = document.MailMerge.GetMergeFieldNames();
+
+                if (unmergedFields == null || unmergedFields.Length == 0)
+                {
+                    return;
+                }
+
+                fieldsToExecute = new Dictionary<string, string>();
+                foreach (var unmergedField in unmergedFields)
+                {
+                    if (fields.ContainsKey(unmergedField))
+                    {
+                        fieldsToExecute[unmergedField] = fields[unmergedField];
+                    }
+                }
+            }
+
+            // Execute mail merge if we have fields to merge
+            if (fieldsToExecute.Count > 0)
+            {
+                document.MailMerge.Execute(fieldsToExecute.Keys.ToArray(), fieldsToExecute.Values.ToArray());
+            }
+        }
+        
+        /// <summary>
+        /// Flattens nested JSON objects into dot-notation key-value pairs
+        /// </summary>
+        private Dictionary<string, string> FlattenJson(JObject obj, string prefix = "")
+        {
+            var result = new Dictionary<string, string>();
+
+            foreach (var property in obj.Properties())
+            {
+                string key = string.IsNullOrEmpty(prefix) ? property.Name : $"{prefix}.{property.Name}";
+
+                if (property.Value is JObject nestedObject)
+                {
+                    // Recursively flatten nested objects
+                    var nested = FlattenJson(nestedObject, key);
+                    foreach (var kvp in nested)
+                    {
+                        result[kvp.Key] = kvp.Value;
+                    }
+                }
+                else if (property.Value is JArray)
+                {
+                    // Skip arrays - handled separately
+                    continue;
+                }
+                else
+                {
+                    result[key] = property.Value?.ToString() ?? string.Empty;
+                }
+            }
+
+            return result;
+        }
+        /// <summary>
+        /// Extracts data from an input PDF stream and conditionally applies digital signatures
+        /// at detected keyword locations using a provided signature image stream.
+        /// </summary>
+        private MemoryStream DataExtractor(Stream inputStream, IFormFile signatureImage, string signatureKeywordsInput, bool enableDigitalSign)
+        {
+            // Initialize the extractor with required detection settings
+            var extractor = new DataExtractor { EnableFormDetection = false, EnableTableDetection = true, ConfidenceThreshold = 0.6 };
+            // Extract PDF document from the input stream
+            PdfLoadedDocument document = extractor.ExtractDataAsPdfDocument(inputStream);
+            // If digital signing is disabled, return the extracted PDF as-is
+            if (!enableDigitalSign)
+            {
+                _logger.LogInformation("Digital signature is not enabled. Returning PDF without signatures.");
+                var outMs = new MemoryStream();
+                document.Save(outMs);
+                document.Close(true);
+                outMs.Position = 0;
+                return outMs;
+            }
+            // Get the signature image stream from the uploaded file
+            Stream signatureStream = GetSignatureImageStream(signatureImage);
+            // If signature image is not available, return PDF without applying signature
+            if (signatureStream == null)
+            {
+                _logger.LogWarning("Digital signature enabled but no signature image found. Returning PDF without signatures.");
                 var outMs = new MemoryStream();
                 document.Save(outMs);
                 document.Close(true);
@@ -278,113 +514,108 @@ namespace Automated_Loan_Agreement.Controllers
                 return outMs;
             }
 
-            // ONLY process signatures if image exists
-            string[] signatureKeywords = string.IsNullOrWhiteSpace(signatureKeywordsInput)
-                ? new[] { "Signature", "WITNESS", "AuthorizedSign" }
-                : signatureKeywordsInput.Split(',').Select(k => k.Trim()).ToArray();
-            // Iterate through each page in the PDF document
-            for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++)
+            try
             {
-                PdfPageBase page = document.Pages[pageIndex];
-                TextLineCollection textLines;
-                // Extract text lines and words from the current page
-                page.ExtractText(out textLines);
-                // Loop through all extracted text lines
-                foreach (TextLine line in textLines.TextLine)
+                // Use default keywords if none are provided
+                string[] signatureKeywords = string.IsNullOrWhiteSpace(signatureKeywordsInput)
+                    ? new[] { "Sign", "WITNESS", "AuthorizedSign","Signature" }
+                    : signatureKeywordsInput.Split(',').Select(k => k.Trim()).ToArray();
+                // Iterate through each page in the document
+                for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++)
                 {
-                    // Loop through each word within the line
-                    foreach (TextWord word in line.WordCollection)
+                    PdfPageBase page = document.Pages[pageIndex];
+                    TextLineCollection textLines;
+                    // Extract text lines from the page
+                    page.ExtractText(out textLines);
+                    // Iterate through each word on the page
+                    foreach (TextLine line in textLines.TextLine)
                     {
-                        if (!signatureKeywords.Any(k => word.Text.Contains(k, StringComparison.Ordinal)))
-                            continue;
-                        // Determine the bounding rectangle of the keyword
-                        RectangleF bounds = word.Bounds;
-                        // Calculate signature placement relative to keyword position
-                        float signatureX = bounds.X;
-                        float signatureY = bounds.Y - bounds.Height - 5;
-                        float signatureWidth = 80;
-                        float signatureHeight = 20;
-
-                        try
+                        foreach (TextWord word in line.WordCollection)
                         {
-                            using System.IO.FileStream cert = new System.IO.FileStream(Path.GetFullPath("PDF.pfx"), System.IO.FileMode.Open, System.IO.FileAccess.Read);
-                            PdfCertificate pdfCert = new PdfCertificate(cert, "syncfusion");
-                            // Create a digital signature object for the document
-                            PdfSignature signature = new PdfSignature(document, page, pdfCert, "Signature");
-                            // Set signature position and siz
-                            signature.Bounds = new RectangleF(signatureX, signatureY, signatureWidth, signatureHeight);
+                            // Skip words that do not match any signature keyword
+                            if (!signatureKeywords.Any(k => word.Text.Contains(k, StringComparison.Ordinal)))
+                                continue;
+                            // Calculate signature position above the keyword
+                            RectangleF bounds = word.Bounds;
+                            float signatureX = bounds.X;
+                            float signatureY = bounds.Y - bounds.Height - 10;
+                            float signatureWidth = 80;
+                            float signatureHeight = 20;
 
-                            // Add appearance image
-                            if (System.IO.File.Exists(imagePath))
+                            try
                             {
-                                using System.IO.FileStream img = new System.IO.FileStream(imagePath, System.IO.FileMode.Open, System.IO.FileAccess.Read);
-                                PdfBitmap signatureImageBitmap = new PdfBitmap(img);
-                                // Draw the image into the signature appearance
+                                // Load digital certificate
+                                using System.IO.FileStream cert = new System.IO.FileStream(Path.GetFullPath("PDF.pfx"), System.IO.FileMode.Open, System.IO.FileAccess.Read);
+                                PdfCertificate pdfCert = new PdfCertificate(cert, "syncfusion");
+                                // Create and configure the PDF signature
+                                PdfSignature signature = new PdfSignature(document, page, pdfCert, "Signature");
+                                signature.Bounds = new RectangleF(signatureX, signatureY, signatureWidth, signatureHeight);
+
+                                // Load signature image directly from stream
+                                signatureStream.Position = 0; // Reset stream position for each use
+                                PdfBitmap signatureImageBitmap = new PdfBitmap(signatureStream);
                                 signature.Appearance.Normal.Graphics.DrawImage(signatureImageBitmap, 0, 0, signatureWidth, signatureHeight);
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error adding signature to PDF");
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error adding signature to PDF");
+                            }
                         }
                     }
                 }
+
+                var outputMs = new MemoryStream();
+                document.Save(outputMs);
+                document.Close(true);
+                outputMs.Position = 0;
+                return outputMs;
             }
-            // Save the modified document to a memory stream
-            var outputMs = new MemoryStream();
-            document.Save(outputMs);
-            document.Close(true);
-            outputMs.Position = 0;
-            return outputMs;
+            finally
+            {
+                // Clean up signature stream
+                signatureStream?.Dispose();
+            }
         }
 
         /// <summary>
-        /// Gets signature image path only from user-provided image
-        /// Returns null if no image provided - no fallback to local files
+        /// Gets signature image as a stream from user upload or default signature
         /// </summary>
-        private string GetSignatureImagePath(IFormFile signatureImage, bool isUsingDefaults)
+        private Stream GetSignatureImageStream(IFormFile signatureImage)
         {
+            // If user provided an image, return its stream
             if (signatureImage != null && signatureImage.Length > 0)
             {
-                // Save user-provided image to temporary location
-                return SaveTemporaryImage(signatureImage);
+                _logger.LogInformation("Using user-provided signature image stream.");
+                var memoryStream = new MemoryStream();
+                signatureImage.OpenReadStream().CopyTo(memoryStream);
+                memoryStream.Position = 0;
+                return memoryStream;
             }
 
-            // If using default documents, use default local image
-            if (isUsingDefaults)
+            // No user image - use default signature from project
+            string defaultImagePath = Path.Combine(_hostingEnvironment.ContentRootPath, "Signature.png");
+
+            if (System.IO.File.Exists(defaultImagePath))
             {
-                string defaultImagePath = Path.GetFullPath("signature.png");
-                if (System.IO.File.Exists(defaultImagePath))
+                _logger.LogInformation($"Using default signature image from: {defaultImagePath}");
+                try
                 {
-                    _logger.LogInformation("Using default signature image from local.");
-                    return defaultImagePath;
+                    var fileStream = new FileStream(defaultImagePath, FileMode.Open, FileAccess.Read);
+                    var memoryStream = new MemoryStream();
+                    fileStream.CopyTo(memoryStream);
+                    fileStream.Dispose();
+                    memoryStream.Position = 0;
+                    return memoryStream;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Error loading default signature image: {defaultImagePath}");
+                    return null;
                 }
             }
 
-            // No image provided and not using defaults - return null
-            _logger.LogInformation("No signature image provided.");
+            _logger.LogWarning($"Default signature image not found at: {defaultImagePath}");
             return null;
-        }
-
-        /// <summary>
-        /// Saves user-provided signature image to temporary file
-        /// </summary>
-        private string SaveTemporaryImage(IFormFile imageFile)
-        {
-            try
-            {
-                string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + System.IO.Path.GetExtension(imageFile.FileName));
-                using (var stream = new System.IO.FileStream(tempPath, System.IO.FileMode.Create))
-                {
-                    imageFile.CopyTo(stream);
-                }
-                return tempPath;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error saving temporary signature image");
-                return null;
-            }
         }
         /// <summary>
         /// Retrieves a Word document stream from the uploaded file or a default template.
@@ -455,7 +686,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// Splits document by page breaks using bookmarks and returns ZIP bytes
         /// Each section between page breaks becomes a separate PDF
         /// </summary>
-        private byte[] SplitByPageBreak(WordDocument document, IFormFile signatureImage, string signatureKeywords, bool isUsingDefaults)
+        private byte[] SplitByPageBreak(WordDocument document, IFormFile signatureImage, string signatureKeywords, bool enableDigitalSign)
         {
             // Find all page breaks in the document
             List<Entity> entities = document.FindAllItemsByProperty(EntityType.Break, "BreakType", "PageBreak");
@@ -521,7 +752,7 @@ namespace Automated_Loan_Agreement.Controllers
                             pdfStream.Position = 0;
 
                             // Apply digital signatures to each PDF
-                            MemoryStream signedPdfStream = DataExtractor(pdfStream, signatureImage, signatureKeywords, isUsingDefaults);
+                            MemoryStream signedPdfStream = DataExtractor(pdfStream, signatureImage, signatureKeywords, enableDigitalSign);
 
                             // Write PDF into ZIP entry
                             var entry = zip.CreateEntry($"Document_{i}.pdf", CompressionLevel.Fastest);

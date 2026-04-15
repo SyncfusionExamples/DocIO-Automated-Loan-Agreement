@@ -254,7 +254,7 @@
     <div class="Common">
         <div class="tablediv">
             <div class="rowdiv">
-                📝 Generate Automated Document
+                📝 Generate Automated Loan Agreement Document
             </div>
 
             <div class="content-box">
@@ -285,9 +285,22 @@
                         </div>
                     </div>
 
-                    <div class="signature-section">
+                    <div class="celldiv" style="margin: 20px 0;">
+                        <div class="radio-option">
+                            <input type="checkbox"
+                                   id="enableDigitalSign"
+                                   name="enableDigitalSign"
+                                   value="true"
+                                   onchange="toggleSignatureSection()"
+                                   style="width: 20px; height: 20px; margin-right: 10px; cursor: pointer; accent-color: #667eea;" />
+                            <input type="hidden" name="enableDigitalSign" value="false" />
+                            <label for="enableDigitalSign" style="cursor: pointer; color: #555; font-size: 16px; font-weight: 600; margin: 0;">✍️ Enable Digital Signature</label>
+                        </div>
+                    </div>
+
+                    <div class="signature-section" id="signatureSection" style="display: none;">
                         <div class="signature-title">✍️ Digital Signature Configuration (Optional)</div>
-                        
+
                         <div class="celldiv">
                             <div class="file-label">🖼️ Signature Image File</div>
                             <div class="custom-file-wrapper">
@@ -295,10 +308,10 @@
                                 <input type="file" id="signatureImage" name="signatureImage"
                                        accept=".png,.jpg,.jpeg,.gif,.bmp"
                                        onchange="updateFileName(this, 'signatureImageName')" />
-                                <span class="custom-file-name" id="signatureImageName">No image selected</span>
+                                <span class="custom-file-name" id="signatureImageName">Signature.png</span>
                             </div>
                             <div class="helper-text">
-                                💡 Upload a signature image (PNG, JPG, etc.). This is optional - if not provided, no signature will be added to the document.
+                                💡 Upload a custom signature image (PNG, JPG, etc.). If no image is uploaded, the default signature will be placed above the specified keywords in the document.
                             </div>
                         </div>
 
@@ -306,15 +319,16 @@
                             <div class="file-label">🔍 Signature Placeholder Keywords</div>
                             <input type="text"
                                    name="signatureKeywords"
+                                   id="signatureKeywords"
                                    class="text-input"
                                    placeholder="e.g., Signature, AuthorizedSign"
-                                   value="Sign, WITNESS, AuthorizedSign" />
+                                   value="Sign, WITNESS, AuthorizedSign, Signature" />
                             <div class="helper-text">
                                 💡 Enter keywords separated by commas to identify where signatures should be placed in your document. Default: "Sign, WITNESS, AuthorizedSign"
                             </div>
                         </div>
                         <div class="helper-text" style="background: #fff9e6; padding: 12px; border-left: 4px solid #ffc107; margin-bottom: 15px; border-radius: 4px;">
-                            📌 <strong>Note:</strong> Digital signatures will be automatically placed <strong>above</strong> the keywords you specify in your document.
+                            📌 <strong>Note:</strong> Digital signatures will be automatically placed <strong>above</strong> the keywords you specify in your document. If the keywords are not found in the document, the signature will not be inserted in the PDF.
                         </div>
                     </div>
 
@@ -357,8 +371,23 @@
             } else if (spanId === 'jsonFileName') {
                 span.textContent = 'LoanAgreement.json';
             } else if (spanId === 'signatureImageName') {
-                span.textContent = 'No image selected';
+                span.textContent = 'Signature.png';
             }
+        }
+    }
+
+    function toggleSignatureSection() {
+        const checkbox = document.getElementById('enableDigitalSign');
+        const signatureSection = document.getElementById('signatureSection');
+
+        if (checkbox.checked) {
+            signatureSection.style.display = 'block';
+        } else {
+            signatureSection.style.display = 'none';
+            // Reset signature fields when disabled
+            document.getElementById('signatureImage').value = '';
+            document.getElementById('signatureImageName').textContent = 'Signature.png';
+            document.getElementById('signatureKeywords').value = 'Sign, WITNESS, AuthorizedSign';
         }
     }
 </script>
