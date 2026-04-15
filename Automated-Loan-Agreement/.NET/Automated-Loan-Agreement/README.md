@@ -31,6 +31,7 @@ This repository contains a complete showcase sample demonstrating how to build a
   - **Nested Group Merge** – for hierarchical JSON with nested arrays.
 - Generate a **single merged PDF** for a single loan agreement.
 - Generate **multiple PDFs** (split by page breaks) bundled as a **ZIP file** for batch loan agreements.
+- **Optional Digital Signature** – Add digital signatures to generated PDFs at specified keyword locations.
 - Demonstrates how the Syncfusion DocIO library is used to automate document generation.
 
 ## 🚀 Getting Started
@@ -101,10 +102,13 @@ https://localhost:5001
 1. Open the application in your browser.
 2. Upload a **Word template** file (`.docx`) that contains mail merge fields (e.g., `«BorrowerName»`, `«LoanAmount»`).
 3. Upload a **JSON data file** with the corresponding field values.
-4. Select the **Output Type**:
+4. **(Optional)** Check **Enable Digital Signature** to add signatures:
+   - Upload a custom signature image or use the default "Signature.png"
+   - Specify keywords where signatures should appear (default: "Sign, WITNESS, AuthorizedSign")
+5. Select the **Output Type**:
    - `single` – Downloads a single merged PDF.
    - `multiple` – Downloads a ZIP file containing separate PDFs split by page breaks.
-5. Click **Generate Document** to download the result.
+6. Click **Generate Document** to download the result.
 
 ---
 
