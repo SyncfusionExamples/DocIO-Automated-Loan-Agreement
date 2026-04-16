@@ -1,0 +1,153 @@
+﻿@{
+    ViewData["Title"] = "Privacy Policy";
+}
+
+<style>
+    body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+    }
+
+    .privacy-container {
+        max-width: 800px;
+        margin: 50px auto;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        padding: 50px;
+    }
+
+    .privacy-header {
+        text-align: center;
+        margin-bottom: 40px;
+        padding-bottom: 20px;
+        border-bottom: 3px solid #667eea;
+    }
+
+        .privacy-header h1 {
+            color: #333;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .privacy-header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+    .privacy-section {
+        margin-bottom: 30px;
+    }
+
+        .privacy-section h2 {
+            color: #667eea;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .privacy-section p {
+            color: #555;
+            line-height: 1.8;
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+
+        .privacy-section ul {
+            margin-left: 25px;
+            margin-bottom: 15px;
+        }
+
+        .privacy-section li {
+            color: #555;
+            line-height: 1.8;
+            margin-bottom: 8px;
+        }
+
+    .note-box {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 20px;
+        margin: 25px 0;
+        border-radius: 5px;
+    }
+
+        .note-box h3 {
+            color: #856404;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .note-box p {
+            color: #856404;
+            margin: 0;
+            font-weight: 500;
+        }
+
+    .icon {
+        font-size: 24px;
+    }
+</style>
+
+<div class="privacy-container">
+    <div class="privacy-header">
+        <h1>🔒 Privacy Policy</h1>
+        <p>Last Updated: April 15, 2026</p>
+    </div>
+
+    <div class="privacy-section">
+        <h2><span class="icon">📋</span> Introduction</h2>
+        <p>
+            Welcome to our Automated Loan Document Generator Application. We are committed to protecting your privacy and ensuring
+            the security of your data. This privacy policy explains how we handle your information when you use our
+            document generation service.
+        </p>
+    </div>
+
+    <div class="privacy-section">
+        <h2><span class="icon">📄</span> Document Data</h2>
+        <p>When you use our document generation service, we temporarily process:</p>
+        <ul>
+            <li>Word document templates that you upload</li>
+            <li>JSON data files that you provide for mail merge</li>
+            <li>Generated PDF documents</li>
+            <li>Optional signature images for digital signing (if enabled)</li>
+        </ul>
+    </div>
+
+    <div class="privacy-section">
+        <h2><span class="icon">⚙️</span> How We Process Your Data</h2>
+        <p>
+            Your uploaded documents and data files are processed in real-time to generate your PDF document.
+            We use Syncfusion DocIO library to perform the mail merge operation and convert the final document to PDF format.
+        </p>
+    </div>
+
+    <div class="privacy-section">
+        <h2><span class="icon">✍️</span> Digital Signature Feature</h2>
+        <p>
+            Our application includes an optional digital signature feature that allows you to add signatures to your PDF documents.
+            When you enable this feature:
+        </p>    
+    </div>
+
+    <div class="note-box">
+        <h3>⚠️ Important Note</h3>
+        <p>
+            All processing happens locally in your browser, and files <strong>never</strong>
+            go to any server. Everything stays private and secure on your machine. ✔️
+        </p>
+    </div>
+
+    <div class="privacy-section">
+        <h2><span class="icon">📧</span> Contact Us</h2>
+        <p>
+            If you have any questions or concerns about this Privacy Policy, please contact us at
+            <strong><a href="https://support.syncfusion.com/support/tickets/create?categoryId=4820">Syncfusion support</a></strong>
+        </p>
+    </div>
+</div>
