@@ -9,8 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="Syncfusion.DocIORenderer.Net.Core" Version="32.2.9" />
-    <PackageReference Include="Syncfusion.SmartDataExtractor.Net.Core" Version="33.1.45" />
+    <PackageReference Include="Syncfusion.DocIORenderer.Net.Core" Version="*" />
+    <PackageReference Include="Syncfusion.SmartDataExtractor.Net.Core" Version="*" />
   </ItemGroup>
 
 </Project>

@@ -65,7 +65,7 @@ namespace Automated_Loan_Agreement.Controllers
                 return View("Index");
             }
             // Load the Word document with automatic format detection
-            using (WordDocument document = new WordDocument(stream, FormatType.Automatic))
+            using (WordDocument wordDocument = new WordDocument(stream, FormatType.Automatic))
             {
                 // Proceed with mail merge only if a valid JSON file is provided
                 if (jsonStream != null && jsonStream.Length > 0)
@@ -87,7 +87,7 @@ namespace Automated_Loan_Agreement.Controllers
                         }
 
                         // Check if template has group merge fields
-                        string[] templateGroups = HasGroupMergeFields(document);
+                        string[] templateGroups = HasGroupMergeFields(wordDocument);
                         bool templateHasGroupFields = templateGroups != null && templateGroups.Length > 0;
 
                         // Check if JSON contains groups (arrays or nested objects)
@@ -98,12 +98,12 @@ namespace Automated_Loan_Agreement.Controllers
                         // Use ExecuteGroup() or ExecuteNestedGroup() accordingly
                         if (templateHasGroupFields && jsonHasGroups)
                         {
-                            ExecuteGroupMailMerge(document, jsonToken);
+                            ExecuteGroupMailMerge(wordDocument, jsonToken);
                         }
                         // SCENARIO 2: Simple fields OR groups without template group fields
                         else
                         {
-                            ExecuteSimpleMailMerge(document, jsonToken);
+                            ExecuteSimpleMailMerge(wordDocument, jsonToken);
                         }
                        
                     }
@@ -113,14 +113,14 @@ namespace Automated_Loan_Agreement.Controllers
                 if (string.Equals(type, "single", StringComparison.OrdinalIgnoreCase))
                 {
                     // Process PDF with optional digital signature
-                    MemoryStream pdfStream = ProcessPdfDocument(SaveAsPDF(document), signatureImage, signatureKeywords, enableDigitalSign);
+                    MemoryStream pdfStream = ApplyDigitalSignatureIfEnabled(SaveAsPDF(wordDocument), signatureImage, signatureKeywords, enableDigitalSign);
                     // Return the PDF as a downloadable file
                     return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
                 }
                 // OUTPUT: Split document by page breaks with signatures in each PDF
                 else if (string.Equals(type, "multiple", StringComparison.OrdinalIgnoreCase))
                 {
-                    byte[] zipBytes = SplitByPageBreak(document, signatureImage, signatureKeywords, enableDigitalSign);
+                    byte[] zipBytes = SplitByPageBreak(wordDocument, signatureImage, signatureKeywords, enableDigitalSign);
 
                     if (zipBytes != null && zipBytes.Length > 0)
                     {
@@ -130,7 +130,7 @@ namespace Automated_Loan_Agreement.Controllers
                     else
                     {
                         // Process PDF with optional digital signature
-                        MemoryStream pdfStream = ProcessPdfDocument(SaveAsPDF(document), signatureImage, signatureKeywords, enableDigitalSign);
+                        MemoryStream pdfStream = ApplyDigitalSignatureIfEnabled(SaveAsPDF(wordDocument), signatureImage, signatureKeywords, enableDigitalSign);
                         // Return the PDF as a downloadable file
                         return File(pdfStream, "application/pdf", "GeneratedDocument.pdf");
                     }
@@ -148,9 +148,9 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Checks if the Word document has group merge regions
         /// </summary>
-        private string[] HasGroupMergeFields(WordDocument document)
+        private string[] HasGroupMergeFields(WordDocument wordDocument)
         {
-            string[] groupNames = document.MailMerge.GetMergeGroupNames();
+            string[] groupNames = wordDocument.MailMerge.GetMergeGroupNames();
             return groupNames;
 
         }
@@ -186,7 +186,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// - Wrapped array format
         /// - Single flat object
         /// </summary>
-        private void ExecuteSimpleMailMerge(WordDocument document, JToken jsonToken)
+        private void ExecuteSimpleMailMerge(WordDocument wordDocument, JToken jsonToken)
         {
             // List to hold mail merge records
             List<ExpandoObject> records = new List<ExpandoObject>();
@@ -219,7 +219,7 @@ namespace Automated_Loan_Agreement.Controllers
                     else
                     {
                         // CASE 2C: Single object (simple or nested JSON)
-                        ExecuteSingleObjectMailMerge(document, parsedObject);
+                        ExecuteSingleObjectMailMerge(wordDocument, parsedObject);
                         return;
                     }
                 }
@@ -227,7 +227,7 @@ namespace Automated_Loan_Agreement.Controllers
             // Execute mail merge if records exist
             if (records.Count > 0)
             {
-                document.MailMerge.Execute(records);
+                wordDocument.MailMerge.Execute(records);
             }
         }
 
@@ -322,19 +322,19 @@ namespace Automated_Loan_Agreement.Controllers
         /// Executes mail merge for a single flat object
         /// Example: { "EmployeeId": "EMP001", "Name": "John Doe" }
         /// </summary>
-        private void ExecuteSingleObjectMailMerge(WordDocument document, JObject parsedObject)
+        private void ExecuteSingleObjectMailMerge(WordDocument wordDocument, JObject parsedObject)
         {
             var flattenedFields = FlattenJson(parsedObject);
             if (flattenedFields.Count > 0)
             {
-                document.MailMerge.Execute(flattenedFields.Keys.ToArray(), flattenedFields.Values.ToArray());
+                wordDocument.MailMerge.Execute(flattenedFields.Keys.ToArray(), flattenedFields.Values.ToArray());
             }
         }
         /// <summary>
         /// Executes a mail merge operation on a Word document using data from a JSON token.
         /// Processes complex nested groups/arrays.
         /// </summary>
-        private void ExecuteGroupMailMerge(WordDocument document, JToken jsonToken)
+        private void ExecuteGroupMailMerge(WordDocument wordDocument, JToken jsonToken)
         {
             if (jsonToken is JObject groupJsonObject)
             {
@@ -343,7 +343,7 @@ namespace Automated_Loan_Agreement.Controllers
 
                 // Step 2: Process complex groups (nested objects and arrays)
                 // Enable new page for each group execution
-                document.MailMerge.StartAtNewPage = true;
+                wordDocument.MailMerge.StartAtNewPage = true;
 
                 foreach (var property in groupJsonObject.Properties())
                 {
@@ -365,7 +365,7 @@ namespace Automated_Loan_Agreement.Controllers
 
                         singleRecordList.Add(record);
                         MailMergeDataTable dataTable = new MailMergeDataTable(groupName, singleRecordList);
-                        document.MailMerge.ExecuteGroup(dataTable);
+                        wordDocument.MailMerge.ExecuteGroup(dataTable);
                     }
                     // Handle array of records as a group
                     else if (property.Value is JArray jsonArray && jsonArray.Count > 0)
@@ -378,19 +378,19 @@ namespace Automated_Loan_Agreement.Controllers
                             // Convert and execute as nested group mail merge
                             List<dynamic> parentDataList = ConvertToNestedDataList(jsonArray);
                             MailMergeDataTable parentTable = new MailMergeDataTable(groupName, parentDataList);
-                            document.MailMerge.ExecuteNestedGroup(parentTable);
+                            wordDocument.MailMerge.ExecuteNestedGroup(parentTable);
                         }
                         else
                         {
                             // Convert and execute as flat group mail merge
                             List<ExpandoObject> dataList = ConvertToFlatDataList(jsonArray);
                             MailMergeDataTable dataTable = new MailMergeDataTable(groupName, dataList);
-                            document.MailMerge.ExecuteGroup(dataTable);
+                            wordDocument.MailMerge.ExecuteGroup(dataTable);
                         }
                     }
                 }
                 // Step 3: Execute remaining unmerged simple fields
-                ExecuteFieldsDictionary(document, simpleFields, onlyUnmerged: true);
+                ExecuteFieldsDictionary(wordDocument, simpleFields, onlyUnmerged: true);
             }
         }
         /// <summary>
@@ -414,7 +414,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// Executes mail merge using a dictionary of field names and values.
         /// Can optionally check for unmerged fields only.
         /// </summary>
-        private void ExecuteFieldsDictionary(WordDocument document, Dictionary<string, string> fields, bool onlyUnmerged = false)
+        private void ExecuteFieldsDictionary(WordDocument wordDocument, Dictionary<string, string> fields, bool onlyUnmerged = false)
         {
             if (fields == null || fields.Count == 0)
             {
@@ -424,7 +424,7 @@ namespace Automated_Loan_Agreement.Controllers
             // If onlyUnmerged is true, filter to only unmerged fields in the document
             if (onlyUnmerged)
             {
-                string[] unmergedFields = document.MailMerge.GetMergeFieldNames();
+                string[] unmergedFields = wordDocument.MailMerge.GetMergeFieldNames();
 
                 if (unmergedFields == null || unmergedFields.Length == 0)
                 {
@@ -444,7 +444,7 @@ namespace Automated_Loan_Agreement.Controllers
             // Execute mail merge if we have fields to merge
             if (fieldsToExecute.Count > 0)
             {
-                document.MailMerge.Execute(fieldsToExecute.Keys.ToArray(), fieldsToExecute.Values.ToArray());
+                wordDocument.MailMerge.Execute(fieldsToExecute.Keys.ToArray(), fieldsToExecute.Values.ToArray());
             }
         }
         
@@ -485,7 +485,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// Conditionally applies digital signatures to PDF based on enableDigitalSign flag
         /// Returns PDF stream directly if signature is not needed for optimal performance
         /// </summary>
-        private MemoryStream ProcessPdfDocument(MemoryStream inputStream, IFormFile signatureImage, string signatureKeywordsInput, bool enableDigitalSign)
+        private MemoryStream ApplyDigitalSignatureIfEnabled(MemoryStream inputStream, IFormFile signatureImage, string signatureKeywordsInput, bool enableDigitalSign)
         {
             Stream signatureStream = null;
             try
@@ -505,19 +505,19 @@ namespace Automated_Loan_Agreement.Controllers
                     inputStream.Position = 0;
                     return inputStream;
                 }
-                // Step 3: Only use ProcessPdfDocument when signature is actually needed
-                _logger.LogInformation("Applying digital signatures using ProcessPdfDocument.");
+                // Step 3: Only use ApplyDigitalSignatureIfEnabled when signature is actually needed
+                _logger.LogInformation("Applying digital signatures using ApplyDigitalSignatureIfEnabled.");
                 // Initialize the extractor with required detection settings
                 var extractor = new DataExtractor { EnableFormDetection = false, EnableTableDetection = true, ConfidenceThreshold = 0.6 };
                 // Extract PDF document from the input stream
                 inputStream.Position = 0;
-                PdfLoadedDocument document = extractor.ExtractDataAsPdfDocument(inputStream);
+                PdfLoadedDocument PDFdocument = extractor.ExtractDataAsPdfDocument(inputStream);
                 // Step 4: Apply signatures
-                AddSignaturesToDocument(document, signatureStream, signatureKeywordsInput);
+                AddSignaturesToPDFDocument(PDFdocument, signatureStream, signatureKeywordsInput);
                 // Step 5: Save PDF with signatures
                 var outputMs = new MemoryStream();
-                document.Save(outputMs);
-                document.Close(true);
+                PDFdocument.Save(outputMs);
+                PDFdocument.Close(true);
                 outputMs.Position = 0;
                 return outputMs;
             }
@@ -535,7 +535,7 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Adds digital signatures to PDF document at locations matching specified keywords
         /// </summary>
-        private void AddSignaturesToDocument(PdfLoadedDocument document, Stream signatureImageStream, string keywords)
+        private void AddSignaturesToPDFDocument(PdfLoadedDocument PDFdocument, Stream signatureImageStream, string keywords)
         {
             // Use default keywords if none are provided
             string[] signatureKeywords = string.IsNullOrWhiteSpace(keywords)
@@ -545,9 +545,9 @@ namespace Automated_Loan_Agreement.Controllers
             _logger.LogInformation($"Applying digital signatures for keywords: {string.Join(", ", signatureKeywords)}");
 
             // Iterate through each page in the document
-            for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++)
+            for (int pageIndex = 0; pageIndex < PDFdocument.Pages.Count; pageIndex++)
             {
-                PdfPageBase page = document.Pages[pageIndex];
+                PdfPageBase page = PDFdocument.Pages[pageIndex];
                 TextLineCollection textLines;
 
                 // Extract text lines from the page
@@ -574,7 +574,7 @@ namespace Automated_Loan_Agreement.Controllers
                             PdfCertificate pdfCert = new PdfCertificate(cert, "syncfusion");
 
                             // Create and configure the PDF signature
-                            PdfSignature signature = new PdfSignature(document, page, pdfCert, "Signature");
+                            PdfSignature signature = new PdfSignature(PDFdocument, page, pdfCert, "Signature");
                             signature.Bounds = new RectangleF(signatureX, signatureY, signatureWidth, signatureHeight);
 
                             // Load signature image directly from stream
@@ -718,18 +718,18 @@ namespace Automated_Loan_Agreement.Controllers
         /// Splits document by page breaks using bookmarks and returns ZIP bytes
         /// Each section between page breaks becomes a separate PDF
         /// </summary>
-        private byte[] SplitByPageBreak(WordDocument document, IFormFile signatureImage, string signatureKeywords, bool enableDigitalSign)
+        private byte[] SplitByPageBreak(WordDocument wordDocument, IFormFile signatureImage, string signatureKeywords, bool enableDigitalSign)
         {
             // Find all page breaks in the document
-            List<Entity> entities = document.FindAllItemsByProperty(EntityType.Break, "BreakType", "PageBreak");
+            List<Entity> entities = wordDocument.FindAllItemsByProperty(EntityType.Break, "BreakType", "PageBreak");
             if (entities == null || entities.Count == 0)
                 return null;
 
-            WSection section = document.Sections[0];
+            WSection section = wordDocument.Sections[0];
             WTextBody body = section.Body;
             int bookmarkIndex = 1;
             // Step 1: Insert a NEW paragraph at the very beginning with BookmarkStart
-            WParagraph firstBookmarkPara = new WParagraph(document);
+            WParagraph firstBookmarkPara = new WParagraph(wordDocument);
             firstBookmarkPara.AppendBookmarkStart($"Page_Bookmark_{bookmarkIndex}");
             body.ChildEntities.Insert(0, firstBookmarkPara);
 
@@ -747,7 +747,7 @@ namespace Automated_Loan_Agreement.Controllers
 
                 // Insert new paragraph right after the page break paragraph
                 // Close current bookmark and open next bookmark in same paragraph
-                WParagraph bookmarkPara = new WParagraph(document);
+                WParagraph bookmarkPara = new WParagraph(wordDocument);
                 bookmarkPara.AppendBookmarkEnd($"Page_Bookmark_{bookmarkIndex}");
                 bookmarkIndex++;
                 bookmarkPara.AppendBookmarkStart($"Page_Bookmark_{bookmarkIndex}");
@@ -755,7 +755,7 @@ namespace Automated_Loan_Agreement.Controllers
             }
 
             // Step 3: Insert a NEW paragraph at the very end with BookmarkEnd
-            WParagraph lastBookmarkPara = new WParagraph(document);
+            WParagraph lastBookmarkPara = new WParagraph(wordDocument);
             lastBookmarkPara.AppendBookmarkEnd($"Page_Bookmark_{bookmarkIndex}");
             body.ChildEntities.Add(lastBookmarkPara);
             // Step 4: Create ZIP file and convert each bookmarked section to PDF
@@ -767,7 +767,7 @@ namespace Automated_Loan_Agreement.Controllers
                     try
                     {
                         // Navigate to each bookmark section
-                        BookmarksNavigator navigator = new BookmarksNavigator(document);
+                        BookmarksNavigator navigator = new BookmarksNavigator(wordDocument);
                         navigator.MoveToBookmark($"Page_Bookmark_{i}", true, true);
                         WordDocumentPart documentPart = navigator.GetContent();
 
@@ -784,7 +784,7 @@ namespace Automated_Loan_Agreement.Controllers
                             pdfStream.Position = 0;
 
                             // Apply digital signatures to each PDF
-                            MemoryStream signedPdfStream = ProcessPdfDocument(pdfStream, signatureImage, signatureKeywords, enableDigitalSign);
+                            MemoryStream signedPdfStream = ApplyDigitalSignatureIfEnabled(pdfStream, signatureImage, signatureKeywords, enableDigitalSign);
 
                             // Write PDF into ZIP entry
                             var entry = zip.CreateEntry($"Document_{i}.pdf", CompressionLevel.Fastest);
@@ -806,12 +806,12 @@ namespace Automated_Loan_Agreement.Controllers
         /// <summary>
         /// Convert document into PDF and returns PDF stream
         /// </summary>
-        private MemoryStream SaveAsPDF(WordDocument document)
+        private MemoryStream SaveAsPDF(WordDocument wordDocument)
         {
             using (DocIORenderer renderer = new DocIORenderer())
             {
                 // Convert the Word document to PDF format
-                using (PdfDocument pdfDocument = renderer.ConvertToPDF(document))
+                using (PdfDocument pdfDocument = renderer.ConvertToPDF(wordDocument))
                 {
                     MemoryStream pdfStream = new MemoryStream();
                     pdfDocument.Save(pdfStream);
