@@ -1,6 +1,14 @@
 # Syncfusion ASP.NET Core – Automated Loan Agreement Demo
 
-This repository contains a complete showcase sample demonstrating how to build an **Automated Loan Agreement Document Generator** using **Syncfusion DocIO** and **Syncfusion PDF** libraries in an ASP.NET Core MVC application. The sample illustrates how financial teams can automate loan agreement generation by merging dynamic JSON data into Word templates and exporting them as PDF documents.
+This repository contains a complete showcase sample demonstrating how to build an **Automated Loan Agreement Document Generator** using **Syncfusion DocIO**, **Syncfusion PDF**, and **Syncfusion Smart Data Extractor** libraries in an ASP.NET Core MVC application. The sample illustrates how financial teams can automate loan agreement generation by merging dynamic JSON data into Word templates, exporting them as PDF documents, and optionally adding digital signatures with intelligent keyword-based placement.
+
+## Key Capabilities
+
+- **Document Generation**: Automatically merge JSON data into Word templates using DocIO mail merge
+- **PDF Conversion**: Convert generated documents to professional PDF format
+- **Digital Signatures**: Add certificate-based digital signatures to authenticate and validate documents
+- **Smart Signature Placement**: Data Extractor to automatically detect signature locations based on keywords
+- **Batch Processing**: Generate single or multiple PDFs for individual and bulk loan agreement creation
 
 ---
 
