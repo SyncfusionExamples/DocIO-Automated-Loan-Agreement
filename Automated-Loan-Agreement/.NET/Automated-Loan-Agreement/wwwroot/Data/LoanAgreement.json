@@ -24,9 +24,6 @@
       "MaturityDate": "April 15, 2056",
       "PrepaymentPenalty": "2% of outstanding principal",
       "LatePaymentFee": "$75",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     },
     {
@@ -53,9 +50,6 @@
       "MaturityDate": "April 10, 2036",
       "PrepaymentPenalty": "3% of outstanding principal",
       "LatePaymentFee": "£50",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     },
     {
@@ -82,9 +76,6 @@
       "MaturityDate": "April 12, 2031",
       "PrepaymentPenalty": "No prepayment penalty",
       "LatePaymentFee": "AU$40",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     },
     {
@@ -111,9 +102,6 @@
       "MaturityDate": "April 8, 2033",
       "PrepaymentPenalty": "2.5% of outstanding principal",
       "LatePaymentFee": "CA$50",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     },
     {
@@ -140,9 +128,6 @@
       "MaturityDate": "April 18, 2051",
       "PrepaymentPenalty": "1.5% of outstanding principal",
       "LatePaymentFee": "€60",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     },
     {
@@ -169,9 +154,6 @@
       "MaturityDate": "April 20, 2032",
       "PrepaymentPenalty": "3.5% of outstanding principal",
       "LatePaymentFee": "$85",
-      "WitnessName": "John Doe",
-      "WitnessDate": "March 19, 2026",
-      "BorrowerDate": "March 19, 2026",
       "LenderDate": "March 19, 2026"
     }
   ]

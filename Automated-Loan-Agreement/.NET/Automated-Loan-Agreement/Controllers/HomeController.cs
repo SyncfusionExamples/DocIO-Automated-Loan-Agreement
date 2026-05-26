@@ -539,7 +539,7 @@ namespace Automated_Loan_Agreement.Controllers
         {
             // Use default keywords if none are provided
             string[] signatureKeywords = string.IsNullOrWhiteSpace(keywords)
-                ? new[] { "Sign", "WITNESS", "AuthorizedSign", "Signature" }
+                ? new[] { "AuthorizedSign", "Signatory" }
                 : keywords.Split(',').Select(k => k.Trim()).ToArray();
 
             _logger.LogInformation($"Applying digital signatures for keywords: {string.Join(", ", signatureKeywords)}");
